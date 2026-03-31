@@ -1,7 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_naver_map/flutter_naver_map.dart';
 import 'screens/sign_in_screen.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  try {
+    // 네이버 지도 SDK 초기화 
+    await FlutterNaverMap().init(
+      clientId: '2qzwglommb',
+      onAuthFailed: (error) {
+        debugPrint('네이버 지도 인증 실패: $error');
+      },
+    );
+  } catch (e) {
+    debugPrint('네이버 지도 SDK 초기화 중 에러 발생: $e');
+  }
+
   runApp(const MyApp());
 }
 
