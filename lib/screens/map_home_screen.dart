@@ -9,21 +9,33 @@ class MapHomeScreen extends StatefulWidget {
 }
 
 class _MapHomeScreenState extends State<MapHomeScreen> {
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
         children: [
           // Background Placeholder Map
-          Container(
-            color: const Color(0xFFE8E8E8),
-            child: Stack(
-              children: [
-                Positioned(top: 200, left: 150, child: _buildMarker(Colors.red)),
-                Positioned(top: 350, left: 280, child: _buildMarker(Colors.red)),
-                Positioned(top: 400, left: 100, child: _buildMarker(Colors.blue, isCurrent: true)),
-                Positioned(top: 150, left: 300, child: _buildMarker(Colors.red)),
-              ],
+          GestureDetector(
+            onTap: () => FocusScope.of(context).unfocus(),
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              color: const Color(0xFFE8E8E8),
+              child: Stack(
+                children: [
+                  Positioned(top: 200, left: 150, child: _buildMarker(Colors.red)),
+                  Positioned(top: 350, left: 280, child: _buildMarker(Colors.red)),
+                  Positioned(top: 400, left: 100, child: _buildMarker(Colors.blue, isCurrent: true)),
+                  Positioned(top: 150, left: 300, child: _buildMarker(Colors.red)),
+                ],
+              ),
             ),
           ),
           
@@ -35,10 +47,23 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   CustomSearchBar(
-                    hintText: '시부야',
+                    hintText: '원하는 지역을 검색하세요 (예: 시부야)',
+                    controller: _searchController,
                     leftIcon: Icons.search,
-                    rightIcon: Icons.edit,
-                    onTap: () {},
+                    rightIcon: _searchController.text.isNotEmpty ? Icons.cancel : Icons.edit,
+                    onChanged: (value) {
+                      setState(() {});
+                    },
+                    onSubmitted: (value) {
+                      FocusScope.of(context).unfocus();
+                      // 지역 검색 API 호출 등 처리
+                    },
+                    onRightIconTap: () {
+                      if (_searchController.text.isNotEmpty) {
+                        _searchController.clear();
+                        setState(() {});
+                      }
+                    },
                   ),
                   const SizedBox(height: 12),
                   Row(

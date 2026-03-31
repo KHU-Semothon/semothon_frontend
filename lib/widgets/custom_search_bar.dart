@@ -5,6 +5,11 @@ class CustomSearchBar extends StatelessWidget {
   final IconData leftIcon;
   final IconData? rightIcon;
   final VoidCallback? onTap;
+  final VoidCallback? onRightIconTap;
+  final ValueChanged<String>? onChanged;
+  final ValueChanged<String>? onSubmitted;
+  final TextEditingController? controller;
+  final bool readOnly;
 
   const CustomSearchBar({
     super.key,
@@ -12,6 +17,11 @@ class CustomSearchBar extends StatelessWidget {
     required this.leftIcon,
     this.rightIcon,
     this.onTap,
+    this.onRightIconTap,
+    this.onChanged,
+    this.onSubmitted,
+    this.controller,
+    this.readOnly = false,
   });
 
   @override
@@ -33,7 +43,7 @@ class CustomSearchBar extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(24),
-          onTap: onTap,
+          onTap: readOnly ? onTap : null,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
             child: Row(
@@ -41,16 +51,37 @@ class CustomSearchBar extends StatelessWidget {
                  Icon(leftIcon, color: Colors.grey[600]),
                  const SizedBox(width: 12),
                  Expanded(
-                   child: Text(
-                     hintText,
-                     style: const TextStyle(
-                       color: Colors.black,
-                       fontSize: 15,
-                     ),
-                   ),
+                   child: readOnly
+                     ? Text(
+                         hintText,
+                         style: const TextStyle(
+                           color: Colors.black,
+                           fontSize: 15,
+                         ),
+                       )
+                     : TextField(
+                         controller: controller,
+                         readOnly: readOnly,
+                         onChanged: onChanged,
+                         onSubmitted: onSubmitted,
+                         textInputAction: TextInputAction.search,
+                         decoration: InputDecoration(
+                           hintText: hintText,
+                           border: InputBorder.none,
+                           isDense: true,
+                           contentPadding: EdgeInsets.zero,
+                         ),
+                         style: const TextStyle(
+                           color: Colors.black,
+                           fontSize: 15,
+                         ),
+                       ),
                  ),
                  if (rightIcon != null)
-                   Icon(rightIcon, color: Colors.grey[600]),
+                   GestureDetector(
+                     onTap: onRightIconTap,
+                     child: Icon(rightIcon, color: Colors.grey[600]),
+                   ),
                ],
             ),
           ),
