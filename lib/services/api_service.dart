@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/map_block.dart';
+import '../models/community_post.dart';
 
 class ApiService {
   // 개발 편의를 위한 가짜 서버 통신 설정 (실제 서버가 준비되면 false로 변경하세요)
@@ -289,6 +290,139 @@ class ApiService {
     } on DioException catch (e) {
       final errorMsg = e.response?.data?['message'] ?? e.message;
       throw Exception('구역 등록 실패: $errorMsg');
+    }
+  }
+
+  // ==========================================
+  // 5. 커뮤니티 게시글 (Community Posts)
+  // ==========================================
+
+  // Mock 모드 전용 게시글 저장소 (서버 역할)
+  static final List<CommunityPost> _mockPosts = [
+    CommunityPost(
+      id: '1', username: 'q7wekr7', isVerified: false,
+      title: '후쿠오카 밤에 혼자 돌아다녀도 괜찮나요?',
+      preview: '편의점이나 돈키호테 들렸다가 늦게 숙소 돌아갈 것 같은데 괜찮은 분위기인...',
+      timeAgo: '1분 전', likes: 1, comments: 3, bookmarks: 0,
+      hasThumbnail: false, category: '화장실', country: '일본',
+      createdAt: DateTime.now().subtract(const Duration(minutes: 1)),
+    ),
+    CommunityPost(
+      id: '2', username: 'vkdllie_999', isVerified: true,
+      title: '시부야 곧 비 올 것 같아요',
+      preview: '하늘 색이 좀 수상한데 우산있는 사람 거의 없음..',
+      timeAgo: '6분 전', likes: 6, comments: 2, bookmarks: 1,
+      hasThumbnail: true, category: '쇼핑', country: '일본',
+      createdAt: DateTime.now().subtract(const Duration(minutes: 6)),
+    ),
+    CommunityPost(
+      id: '3', username: 'r1o8mlk_', isVerified: false,
+      title: '일본 지하철 환승 어렵나요?',
+      preview: '도쿄 처음 가는데 노선이 너무 많아서 걱정돼요ㅠㅠ',
+      timeAgo: '9분 전', likes: 5, comments: 10, bookmarks: 3,
+      hasThumbnail: false, category: '유적', country: '일본',
+      createdAt: DateTime.now().subtract(const Duration(minutes: 9)),
+    ),
+    CommunityPost(
+      id: '4', username: 'zxnr291', isVerified: true,
+      title: '도쿄에서 현지인 많이 가는 라멘집 알려주세요!',
+      preview: '관광지 말고 진짜 맛있는 곳 가고 싶어요!!',
+      timeAgo: '16분 전', likes: 12, comments: 4, bookmarks: 9,
+      hasThumbnail: false, category: '식당', country: '일본',
+      createdAt: DateTime.now().subtract(const Duration(minutes: 16)),
+    ),
+    CommunityPost(
+      id: '5', username: 'tokyolover22', isVerified: false,
+      title: '오사카에서 교토 당일치기 가능할까요?',
+      preview: '신칸센 타면 금방이라던데 어떤 코스로 다녀오는 게 좋을지 추천 부탁드려요',
+      timeAgo: '23분 전', likes: 8, comments: 7, bookmarks: 2,
+      hasThumbnail: true, category: '유적', country: '일본',
+      createdAt: DateTime.now().subtract(const Duration(minutes: 23)),
+    ),
+    CommunityPost(
+      id: '6', username: 'beijing_trip', isVerified: false,
+      title: '베이징 만리장성 입장료 얼마예요?',
+      preview: '어른 기준 얼마인지 알고 싶어요. 예약은 온라인으로 해야 하나요?',
+      timeAgo: '3시간 전', likes: 7, comments: 5, bookmarks: 2,
+      hasThumbnail: false, category: '유적', country: '중국',
+      createdAt: DateTime.now().subtract(const Duration(hours: 3)),
+    ),
+    CommunityPost(
+      id: '7', username: 'shanghai_food', isVerified: true,
+      title: '상하이 현지 식당 추천해주세요!',
+      preview: '샤오롱바오 맛집이나 현지인들이 자주 가는 음식점 알려주시면 감사해요.',
+      timeAgo: '4시간 전', likes: 19, comments: 11, bookmarks: 4,
+      hasThumbnail: true, category: '식당', country: '중국',
+      createdAt: DateTime.now().subtract(const Duration(hours: 4)),
+    ),
+    CommunityPost(
+      id: '8', username: 'nyc_explorer', isVerified: false,
+      title: '뉴욕 Times Square 근처 쇼핑 명소',
+      preview: 'H&M, Zara 말고 뉴욕에서만 살 수 있는 특이한 쇼핑 장소 추천해주세요!',
+      timeAgo: '5시간 전', likes: 14, comments: 6, bookmarks: 8,
+      hasThumbnail: false, category: '쇼핑', country: '미국',
+      createdAt: DateTime.now().subtract(const Duration(hours: 5)),
+    ),
+    CommunityPost(
+      id: '9', username: 'london_walker', isVerified: true,
+      title: '런던 버킹엄 궁전 근위병 교대식 시간 알려주세요',
+      preview: '오전 10시라고 들었는데 계절마다 다르다고도 해서요.',
+      timeAgo: '6시간 전', likes: 22, comments: 8, bookmarks: 5,
+      hasThumbnail: false, category: '유적', country: '영국',
+      createdAt: DateTime.now().subtract(const Duration(hours: 6)),
+    ),
+  ];
+
+  /// 5-1. 커뮤니티 게시글 목록 조회
+  /// [categories] 카테고리 필터 (빈 Set이면 전체)
+  /// [countries]  나라 필터 (빈 Set이면 전체)
+  /// [sort]       정렬 기준 (latest·popular·comments)
+  Future<List<CommunityPost>> getPosts({
+    Set<String> categories = const {},
+    Set<String> countries  = const {},
+    String sort = 'latest',
+    int page = 0,
+    int size = 20,
+  }) async {
+    if (useMock) {
+      await Future.delayed(const Duration(milliseconds: 300));
+      return _mockPosts.where((p) {
+        final categoryOk = categories.isEmpty || categories.contains(p.category);
+        final countryOk  = countries.isEmpty  || countries.contains(p.country);
+        return categoryOk && countryOk;
+      }).toList();
+    }
+
+    try {
+      final response = await _dio.get('/api/v1/posts', queryParameters: {
+        if (categories.isNotEmpty) 'categories': categories.join(','),
+        if (countries.isNotEmpty)  'countries':  countries.join(','),
+        'sort': sort,
+        'page': page,
+        'size': size,
+      });
+      final body = _extractBody(response);
+      final list = (body?['data'] as List?) ?? [];
+      return list.map((e) => CommunityPost.fromJson(e as Map<String, dynamic>)).toList();
+    } on DioException catch (e) {
+      final errorMsg = e.response?.data?['message'] ?? e.message;
+      throw Exception('게시글 목록 조회 실패: $errorMsg');
+    }
+  }
+
+  /// 5-2. 커뮤니티 게시글 등록
+  Future<void> createPost(CommunityPost post) async {
+    if (useMock) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      _mockPosts.insert(0, post); // 최신순 맨 앞에 추가
+      return;
+    }
+
+    try {
+      await _dio.post('/api/v1/posts', data: post.toJson());
+    } on DioException catch (e) {
+      final errorMsg = e.response?.data?['message'] ?? e.message;
+      throw Exception('게시글 등록 실패: $errorMsg');
     }
   }
 }

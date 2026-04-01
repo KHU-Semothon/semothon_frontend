@@ -284,49 +284,53 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
     );
   }
 
-  // 지역 검색 및 카메라 이동 함수 (네이버 지오코딩 API 활용)
+  // 지역 검색 및 카메라 이동 함수 (OpenStreetMap Nominatim API 활용 - 무료, 키 없음)
   Future<void> _searchAndMove(String query) async {
     if (query.isEmpty) return;
 
-    FocusScope.of(context).unfocus(); // 검색 시 키보드 내리기
+    FocusScope.of(context).unfocus();
 
-    // 주의: 실제 배포 시에는 API 키를 코드에 직접 입력하지 마시고 환경변수(.env) 등으로 안전하게 관리하세요.
-    const String clientId = '2qzwglommb'; // 네이버 클라우드 플랫폼 Client ID
-    const String clientSecret = 'McvrNFOkNg1PjqJP6SOxBBxmTafG0fe4LGtooM35'; // 네이버 클라우드 플랫폼 Client Secret
-
-    // 네이버 Geocoding API 주소 (지명/주소 -> 위경도 변환)
-    final url = Uri.parse(
-        'https://naveropenapi.apigw.ntruss.com/map-geocode/v2/geocode?query=$query');
+    // Nominatim API: 무료 geocoding, API 키 불필요
+    final url = Uri.https(
+      'nominatim.openstreetmap.org',
+      '/search',
+      {
+        'q': query.trim(),
+        'format': 'json',
+        'limit': '1',
+      },
+    );
 
     try {
       final response = await http.get(
         url,
         headers: {
-          'X-NCP-APIGW-API-KEY-ID': clientId,
-          'X-NCP-APIGW-API-KEY': clientSecret,
-          'Accept': 'application/json',
+          // Nominatim 이용 정책상 User-Agent 필수
+          'User-Agent': 'SemothonApp/1.0',
+          'Accept-Language': 'ko,en',
         },
       );
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final addresses = data['addresses'] as List?;
-        
-        if (addresses != null && addresses.isNotEmpty) {
-          final firstResult = addresses[0];
-          final double lat = double.parse(firstResult['y']); // 위도
-          final double lng = double.parse(firstResult['x']); // 경도
+        final List<dynamic> results = jsonDecode(response.body);
+
+        if (results.isNotEmpty) {
+          final double lat = double.parse(results[0]['lat'] as String);
+          final double lng = double.parse(results[0]['lon'] as String);
 
           if (_mapController != null) {
-            // 해당 좌표로 카메라 부드럽게 이동
+            // 검색 결과 위치로 카메라 부드럽게 이동
             final cameraUpdate = NCameraUpdate.withParams(
               target: NLatLng(lat, lng),
               zoom: 15,
             );
-            cameraUpdate.setAnimation(animation: NCameraAnimation.fly, duration: const Duration(milliseconds: 800));
+            cameraUpdate.setAnimation(
+              animation: NCameraAnimation.fly,
+              duration: const Duration(milliseconds: 800),
+            );
             _mapController!.updateCamera(cameraUpdate);
 
-            // 해당 위치에 마커 표시
+            // 검색 결과 마커 표시 (이전 검색 마커 덮어씌우기)
             final marker = NMarker(
               id: 'search_result',
               position: NLatLng(lat, lng),
@@ -343,12 +347,17 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('API 오류: ${response.statusCode} - 인증키를 확인해주세요.')),
+            SnackBar(content: Text('검색 오류: ${response.statusCode}')),
           );
         }
       }
     } catch (e) {
-      debugPrint('네트워크 또는 변환 오류: $e');
+      debugPrint('검색 오류: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('네트워크 오류가 발생했습니다.')),
+        );
+      }
     }
   }
 

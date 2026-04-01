@@ -5,44 +5,42 @@ class MyPageScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const double trustLevel = 0.78; // 신뢰도 78%
+
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
+        centerTitle: true,
         title: const Text(
           '마이페이지',
-          style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+          style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 17),
         ),
-        actions: [
-          IconButton(onPressed: () {}, icon: const Icon(Icons.notifications_none, color: Colors.grey)),
-          IconButton(onPressed: () {}, icon: const Icon(Icons.settings_outlined, color: Colors.grey)),
-        ],
       ),
       body: SingleChildScrollView(
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 1. 프로필 영역
+            // ── 1. 프로필 영역 ──────────────────────────────────
             Padding(
-              padding: const EdgeInsets.all(20.0),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Stack(
                     children: [
                       const CircleAvatar(
-                        radius: 40,
-                        backgroundColor: Color(0xFFE0E0E0),
-                        // backgroundImage: NetworkImage('유저이미지주소'),
+                        radius: 36,
+                        backgroundColor: Color(0xFFD0D0D0),
                       ),
                       Positioned(
                         right: 0,
                         top: 0,
                         child: Container(
-                          width: 18,
-                          height: 18,
+                          width: 14,
+                          height: 14,
                           decoration: BoxDecoration(
-                            color: const Color(0xFF00E5FF),
+                            color: const Color(0xFF29B6F6),
                             shape: BoxShape.circle,
                             border: Border.all(color: Colors.white, width: 2),
                           ),
@@ -51,140 +49,174 @@ class MyPageScreen extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
+                      Text(
+                        'emberecho',
+                        style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        '일본 거주 2년 · 방문 5회',
+                        style: TextStyle(fontSize: 13, color: Colors.grey),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
+            // ── 2. 신뢰도 바 ────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Text('😊', style: TextStyle(fontSize: 16)),
+                      const SizedBox(width: 6),
+                      Text(
+                        '신뢰도 ${(trustLevel * 100).toInt()}%',
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        '앙금류 사용자',
+                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  LayoutBuilder(builder: (ctx, constraints) {
+                    final total = constraints.maxWidth;
+                    final filled = total * trustLevel;
+                    return Stack(
+                      clipBehavior: Clip.none,
                       children: [
-                        const Text(
-                          'emberecho',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                        // 배경 바
+                        Container(
+                          height: 6,
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[200],
+                            borderRadius: BorderRadius.circular(3),
+                          ),
                         ),
-                        const SizedBox(height: 4),
-                        const Text('ㄹㄹㄹㄹ', style: TextStyle(color: Colors.grey)),
-                        const SizedBox(height: 12),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            _buildProfileBadge('거주 기간'),
-                            _buildProfileBadge('방문횟수'),
-                            _buildProfileBadge('인증여부'),
-                          ],
+                        // 채워진 바
+                        Container(
+                          height: 6,
+                          width: filled,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFF5A5F),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                        ),
+                        // 핸들 점
+                        Positioned(
+                          left: filled - 10,
+                          top: -7,
+                          child: Container(
+                            width: 20,
+                            height: 20,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF29B6F6),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
                         ),
                       ],
+                    );
+                  }),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // ── 3. 프로필 편집 / 여행 경험 관리 버튼 ──────────
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () {},
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Color(0xFFDDDDDD)),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      child: const Text(
+                        '프로필 편집',
+                        style: TextStyle(color: Colors.black, fontWeight: FontWeight.w600, fontSize: 14),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () {},
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Color(0xFFDDDDDD)),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      child: const Text(
+                        '여행 경험 관리',
+                        style: TextStyle(color: Colors.black, fontWeight: FontWeight.w600, fontSize: 14),
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
 
-            // 2. 신뢰도 슬라이더/프로그레스 바
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10),
-              child: Column(
-                children: [
-                  Stack(
-                    alignment: Alignment.centerLeft,
-                    children: [
-                      Container(
-                        height: 6,
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[200],
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                      ),
-                      Container(
-                        height: 6,
-                        width: MediaQuery.of(context).size.width * 0.7, // 신뢰도 수치에 따른 비중
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFF5A5F), // 시안의 붉은 계열 색상
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                      ),
-                      Positioned(
-                        left: MediaQuery.of(context).size.width * 0.7 - 10,
-                        child: Container(
-                          width: 20,
-                          height: 20,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFF80D8FF), // 하늘색 핸들
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-
             const SizedBox(height: 20),
+            const Divider(height: 1, color: Color(0xFFF0F0F0), thickness: 8),
 
-            // 3. 인증/활동 기록 탭 바
-            DefaultTabController(
-              length: 2,
-              child: Column(
-                children: [
-                  const TabBar(
-                    indicatorColor: Colors.black,
-                    labelColor: Colors.black,
-                    unselectedLabelColor: Colors.grey,
-                    tabs: [
-                      Tab(text: '인증'),
-                      Tab(text: '활동 기록'),
-                    ],
-                  ),
-                  // 실제 데이터 리스트가 들어갈 자리 (TabBarView)
-                  Container(
-                    height: 1,
-                    color: Colors.grey[300],
-                  ),
-                ],
-              ),
-            ),
+            // ── 4. 메뉴 그룹 1: 활동 ───────────────────────────
+            _buildMenuItem('내가 쓴 글'),
+            _buildMenuItem('내가 단 댓글'),
+            _buildMenuItem('좋아요'),
 
-            // 4. 하단 메뉴 리스트
-            const SizedBox(height: 20),
-            _buildMenuItem('신고 등등'),
-            _buildMenuItem('각종 설정'),
-            _buildMenuItem('알림이나'),
-            _buildMenuItem('고객센터 그런거'),
+            const Divider(height: 1, color: Color(0xFFF0F0F0), thickness: 8),
+
+            // ── 5. 메뉴 그룹 2: 인증 ───────────────────────────
+            _buildMenuItem('인증 상태'),
+
+            const Divider(height: 1, color: Color(0xFFF0F0F0), thickness: 8),
+
+            // ── 6. 메뉴 그룹 3: 설정 ───────────────────────────
+            _buildMenuItem('알림 설정'),
+            _buildMenuItem('계정 설정'),
+
+            const Divider(height: 1, color: Color(0xFFF0F0F0), thickness: 8),
+
+            // ── 7. 메뉴 그룹 4: 지원 ───────────────────────────
+            _buildMenuItem('고객센터'),
+            _buildMenuItem('신고 내역'),
+
+            const SizedBox(height: 40),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildProfileBadge(String label) {
-    return Column(
-      children: [
-        Container(
-          width: 40,
-          height: 40,
-          decoration: const BoxDecoration(
-            color: Color(0xFFE0E0E0),
-            shape: BoxShape.circle,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          label,
-          style: const TextStyle(fontSize: 12, color: Colors.grey),
-        ),
-      ],
-    );
-  }
-
   Widget _buildMenuItem(String title) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
-      child: Row(
-        children: [
-          Text(
-            title,
-            style: const TextStyle(fontSize: 16),
-          ),
-        ],
+    return InkWell(
+      onTap: () {},
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(title, style: const TextStyle(fontSize: 15)),
+            const Icon(Icons.chevron_right, color: Colors.grey, size: 20),
+          ],
+        ),
       ),
     );
   }

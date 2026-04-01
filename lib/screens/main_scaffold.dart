@@ -50,7 +50,7 @@ class _MainScaffoldState extends State<MainScaffold> {
             label: 'Q&A',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.folder_outlined), // 사진 속 폴더 모양
+            icon: Icon(Icons.folder_outlined),
             activeIcon: Icon(Icons.folder),
             label: '저장',
           ),
