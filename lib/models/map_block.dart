@@ -24,4 +24,29 @@ class MapBlock {
 
   // 24시간이 지났는지 여부를 판단하는 getter
   bool get isExpired => DateTime.now().difference(createdAt).inHours >= 24;
+
+  /// 서버 전송용 JSON 직렬화
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'latitude': center.latitude,
+    'longitude': center.longitude,
+    'radius': radius,
+    'type': type.name,           // 'hazard' | 'cultural'
+    'comment': comment,
+    'createdAt': createdAt.toIso8601String(),
+  };
+
+  /// 서버 응답 JSON 역직렬화
+  factory MapBlock.fromJson(Map<String, dynamic> json) => MapBlock(
+    id: json['id'].toString(),
+    center: NLatLng(
+      (json['latitude'] as num).toDouble(),
+      (json['longitude'] as num).toDouble(),
+    ),
+    radius: (json['radius'] as num).toDouble(),
+    type: json['type'] == 'cultural' ? BlockType.cultural : BlockType.hazard,
+    comment: json['comment'] as String,
+    createdAt: DateTime.parse(json['createdAt'] as String),
+  );
 }
+

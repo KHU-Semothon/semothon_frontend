@@ -1,7 +1,11 @@
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/map_block.dart';
 
 class ApiService {
+  // 개발 편의를 위한 가짜 서버 통신 설정 (실제 서버가 준비되면 false로 변경하세요)
+  static const bool useMock = true;
+
   late final Dio _dio;
   // 실제 서버 환경에 맞게 변경 (안드로이드 에뮬레이터 로컬: http://10.0.2.2:8080)
   static const String baseUrl = 'http://10.0.2.2:8080';
@@ -73,6 +77,11 @@ class ApiService {
     required String password,
     required String nickname,
   }) async {
+    if (useMock) {
+      await Future.delayed(const Duration(seconds: 1));
+      return {'status': 200, 'message': '가짜 회원가입 성공'};
+    }
+
     try {
       final response = await _dio.post('/api/v1/auth/signup', data: {
         'email': email,
@@ -91,6 +100,13 @@ class ApiService {
     required String email,
     required String password,
   }) async {
+    if (useMock) {
+      await Future.delayed(const Duration(seconds: 1));
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('accessToken', 'mock_token_123');
+      return {'status': 200, 'message': '가짜 로그인 성공', 'data': {'accessToken': 'mock_token_123'}};
+    }
+
     try {
       final response = await _dio.post('/api/v1/auth/login', data: {
         'email': email,
@@ -212,5 +228,67 @@ class ApiService {
   Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('accessToken');
+  }
+
+  // ==========================================
+  // 4. 구역 공유 (Map Blocks)
+  // ==========================================
+
+  // Mock 모드 전용 공유 저장소 (서버 역할)
+  // 실제 서버 연동 시에는 이 리스트 없이 서버 DB가 처리합니다.
+  static final List<MapBlock> _mockBlocks = [];
+
+  /// 4-1. 현재 지도 화면 범위 내 구역 목록 조회
+  /// [minLat] 남쪽 위도, [maxLat] 북쪽 위도
+  /// [minLng] 서쪽 경도, [maxLng] 동쪽 경도
+  Future<List<MapBlock>> getBlocksInBounds({
+    required double minLat,
+    required double maxLat,
+    required double minLng,
+    required double maxLng,
+  }) async {
+    if (useMock) {
+      await Future.delayed(const Duration(milliseconds: 300));
+      // 만료된 항목 먼저 정리
+      _mockBlocks.removeWhere((b) => b.isExpired);
+      // 현재 화면 범위 안에 중심점이 포함된 블록만 반환
+      return _mockBlocks.where((b) {
+        return b.center.latitude >= minLat &&
+            b.center.latitude <= maxLat &&
+            b.center.longitude >= minLng &&
+            b.center.longitude <= maxLng;
+      }).toList();
+    }
+
+    try {
+      final response = await _dio.get('/api/v1/blocks', queryParameters: {
+        'minLat': minLat,
+        'maxLat': maxLat,
+        'minLng': minLng,
+        'maxLng': maxLng,
+      });
+      final body = _extractBody(response);
+      final list = (body?['data'] as List?) ?? [];
+      return list.map((e) => MapBlock.fromJson(e as Map<String, dynamic>)).toList();
+    } on DioException catch (e) {
+      final errorMsg = e.response?.data?['message'] ?? e.message;
+      throw Exception('구역 목록 조회 실패: $errorMsg');
+    }
+  }
+
+  /// 4-2. 새 구역 등록 (서버에 저장하여 다른 사용자와 공유)
+  Future<void> postBlock(MapBlock block) async {
+    if (useMock) {
+      await Future.delayed(const Duration(seconds: 1));
+      _mockBlocks.add(block);
+      return;
+    }
+
+    try {
+      await _dio.post('/api/v1/blocks', data: block.toJson());
+    } on DioException catch (e) {
+      final errorMsg = e.response?.data?['message'] ?? e.message;
+      throw Exception('구역 등록 실패: $errorMsg');
+    }
   }
 }

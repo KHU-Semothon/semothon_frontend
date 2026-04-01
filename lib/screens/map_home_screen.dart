@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:flutter_naver_map/flutter_naver_map.dart';
 import '../widgets/custom_search_bar.dart';
 import '../models/map_block.dart';
+import '../services/api_service.dart';
 
 class MapHomeScreen extends StatefulWidget {
   const MapHomeScreen({super.key});
@@ -14,15 +16,28 @@ class MapHomeScreen extends StatefulWidget {
 
 class _MapHomeScreenState extends State<MapHomeScreen> {
   final TextEditingController _searchController = TextEditingController();
+  final ApiService _api = ApiService();
   bool isRegistrationMode = false;
+  bool _isLoading = false;       // 서버 통신 중 로딩 표시 여부
   NaverMapController? _mapController;
-  
+  Timer? _debounceTimer;         // 카메라 정지 후 서버 요청 debounce용
+
   // 영역 등록을 위한 상태 변수 (원형 기반)
   final List<MapBlock> _savedBlocks = [];
   NLatLng? _selectedCenter;
   double _currentRadius = 50.0;
   NCircleOverlay? _currentDrawingCircle;
   NMarker? _centerMarker;
+
+  // 필터: null = 전체, BlockType.hazard = 위험구역, BlockType.cultural = 문화구역
+  BlockType? _filterType;
+  // 필터 버튼의 정확한 화면 위치를 얻기 위한 GlobalKey
+  final GlobalKey _filterButtonKey = GlobalKey();
+
+  /// 현재 필터 설정에 맞게 걸러진 블록 목록
+  List<MapBlock> get _filteredBlocks => _filterType == null
+      ? _savedBlocks
+      : _savedBlocks.where((b) => b.type == _filterType).toList();
 
   void _clearDrawing() {
     _selectedCenter = null;
@@ -103,12 +118,46 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
     }
   }
 
-  // 앱 시작(MapReady) 시 만료되지 않은 데이터만 싹 불러오기
-  void _loadSavedOverlaysOnReady() {
+  /// 현재 화면 경계 좌표를 기반으로 서버에서 구역 목록을 불러와 지도와 리스트에 반영합니다.
+  /// debounce가 적용되어 있어 연속된 카메라 이동 중 중복 호출을 방지합니다.
+  void _fetchBlocksInCurrentBounds() {
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 300), () async {
+      if (_mapController == null || !mounted) return;
+      try {
+        final bounds = await _mapController!.getContentBounds();
+        final blocks = await _api.getBlocksInBounds(
+          minLat: bounds.southWest.latitude,
+          maxLat: bounds.northEast.latitude,
+          minLng: bounds.southWest.longitude,
+          maxLng: bounds.northEast.longitude,
+        );
+        if (!mounted) return;
+        // 기존 오버레이 전부 삭제 후 새로운 범위 결과로 오버레이 재구성
+        for (final b in _savedBlocks) {
+          try { _mapController!.deleteOverlay(NOverlayInfo(type: NOverlayType.circleOverlay, id: b.id)); } catch (_) {}
+        }
+        setState(() => _savedBlocks
+          ..clear()
+          ..addAll(blocks));
+        for (final b in _savedBlocks) {
+          _addBlockOverlay(b);
+        }
+      } catch (e) {
+        debugPrint('구역 조회 오류: $e');
+      }
+    });
+  }
+
+  /// 필터 변경 시 지도 오버레이를 현재 필터에 맞게 동기화합니다.
+  void _applyFilterToOverlays() {
     if (_mapController == null) return;
-    _savedBlocks.removeWhere((b) => b.isExpired);
-    for (var block in _savedBlocks) {
-      _addBlockOverlay(block);
+    // 전체 오버레이 제거 후 필터에 맞는 항목만 다시 표시
+    for (final b in _savedBlocks) {
+      try { _mapController!.deleteOverlay(NOverlayInfo(type: NOverlayType.circleOverlay, id: b.id)); } catch (_) {}
+    }
+    for (final b in _filteredBlocks) {
+      _addBlockOverlay(b);
     }
   }
 
@@ -180,12 +229,12 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.black, foregroundColor: Colors.white),
-                  onPressed: () {
+                  onPressed: () async {
                     if (comment.isEmpty) {
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('코멘트를 입력해주세요.')));
                       return;
                     }
-                    
+
                     final block = MapBlock(
                       id: DateTime.now().millisecondsSinceEpoch.toString(),
                       center: _selectedCenter!,
@@ -194,18 +243,36 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                       comment: comment,
                       createdAt: DateTime.now(),
                     );
-                    _savedBlocks.add(block);
-                    
+
                     Navigator.pop(context);
                     setState(() {
                       isRegistrationMode = false;
+                      _isLoading = true;
                       _clearDrawing();
                     });
-                    
-                    // 불필요한 전체 새로고침 대신, '방금 생성한 블록' 1개만 지도에 즉각 던져서 충돌 원천 차단
-                    _addBlockOverlay(block);
-                    
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('정보가 등록되었습니다.')));
+
+                    try {
+                      // 서버(또는 Mock)에 구역 저장 → 다른 사용자와 공유
+                      await _api.postBlock(block);
+                      // 로컬에도 즉시 반영
+                      setState(() {
+                        _savedBlocks.add(block);
+                      });
+                      _addBlockOverlay(block);
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('정보가 등록되었습니다.')),
+                        );
+                      }
+                    } catch (e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('등록 실패: $e')),
+                        );
+                      }
+                    } finally {
+                      if (mounted) setState(() => _isLoading = false);
+                    }
                   },
                   child: const Text('저장'),
                 ),
@@ -229,7 +296,7 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
 
     // 네이버 Geocoding API 주소 (지명/주소 -> 위경도 변환)
     final url = Uri.parse(
-        'https://naveropenapi.apigw.ntruss.com/map-geocode/v2/geocode?query=\$query');
+        'https://naveropenapi.apigw.ntruss.com/map-geocode/v2/geocode?query=$query');
 
     try {
       final response = await http.get(
@@ -276,12 +343,12 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('API 오류: \${response.statusCode} - 인증키를 확인해주세요.')),
+            SnackBar(content: Text('API 오류: ${response.statusCode} - 인증키를 확인해주세요.')),
           );
         }
       }
     } catch (e) {
-      debugPrint('네트워크 또는 변환 오류: \$e');
+      debugPrint('네트워크 또는 변환 오류: $e');
     }
   }
 
@@ -289,6 +356,7 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _searchController.dispose();
     super.dispose();
   }
@@ -309,7 +377,29 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
             onMapReady: (controller) {
               _mapController = controller;
               debugPrint("네이버 지도 로딩 완료");
-              _loadSavedOverlaysOnReady(); // 이전 데이터 로딩
+              // 지도 준비 완료 후 현재 화면 범위의 구역 즉시 로딩
+              _fetchBlocksInCurrentBounds();
+            },
+            onCameraChange: (reason, animated) async {
+              if (isRegistrationMode && _selectedCenter != null && _mapController != null) {
+                // 패닝 시 핀이 화면 중앙(카메라 타겟)을 따라가도록 위치 업데이트
+                final cameraPos = await _mapController!.getCameraPosition();
+                _selectedCenter = cameraPos.target;
+                _centerMarker?.setPosition(cameraPos.target);
+                _currentDrawingCircle?.setCenter(cameraPos.target);
+              }
+            },
+            onCameraIdle: () async {
+              if (isRegistrationMode && _selectedCenter != null && _mapController != null) {
+                // 등록 모드: 핀 위치를 카메라 중심점으로 업데이트
+                final cameraPos = await _mapController!.getCameraPosition();
+                setState(() {
+                  _selectedCenter = cameraPos.target;
+                });
+              } else if (!isRegistrationMode) {
+                // 일반 모드: 화면 범위 기반으로 구역 재조회
+                _fetchBlocksInCurrentBounds();
+              }
             },
             onMapTapped: (point, latLng) {
               FocusScope.of(context).unfocus(); // 터치 시 키보드 내리기
@@ -319,6 +409,13 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                   _selectedCenter = latLng;
                 });
                 _updateDrawingOverlay();
+
+                // 탭한 위치로 지도의 중앙을 부드럽게 이동시킴
+                if (_mapController != null) {
+                  final cameraUpdate = NCameraUpdate.withParams(target: latLng);
+                  cameraUpdate.setAnimation(animation: NCameraAnimation.fly, duration: const Duration(milliseconds: 300));
+                  _mapController!.updateCamera(cameraUpdate);
+                }
               }
             },
           ),
@@ -355,24 +452,81 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                     children: [
                       Row(
                         children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(20),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withAlpha(13),
-                                  blurRadius: 4,
-                                )
-                              ],
-                            ),
-                            child: const Row(
-                              children: [
-                                Text('정렬', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                                SizedBox(width: 4),
-                                Icon(Icons.keyboard_arrow_down, size: 16),
-                              ],
+                          GestureDetector(
+                            onTap: () async {
+                              // 필터 버튼의 정확한 위치와 크기를 GlobalKey로 계산
+                              final RenderBox box = _filterButtonKey.currentContext!.findRenderObject() as RenderBox;
+                              final Offset offset = box.localToGlobal(Offset.zero);
+                              final result = await showMenu<BlockType?>(
+                                context: context,
+                                position: RelativeRect.fromLTRB(
+                                  offset.dx,
+                                  offset.dy + box.size.height + 6,
+                                  offset.dx + box.size.width,
+                                  0,
+                                ),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                items: [
+                                  PopupMenuItem<BlockType?>(
+                                    value: null,
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.list_alt, size: 18, color: _filterType == null ? Colors.black : Colors.grey),
+                                        const SizedBox(width: 8),
+                                        Text('전체', style: TextStyle(fontWeight: _filterType == null ? FontWeight.bold : FontWeight.normal)),
+                                      ],
+                                    ),
+                                  ),
+                                  PopupMenuItem<BlockType?>(
+                                    value: BlockType.hazard,
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.warning_amber_rounded, size: 18, color: _filterType == BlockType.hazard ? Colors.red : Colors.grey),
+                                        const SizedBox(width: 8),
+                                        Text('위험 구역', style: TextStyle(fontWeight: _filterType == BlockType.hazard ? FontWeight.bold : FontWeight.normal, color: _filterType == BlockType.hazard ? Colors.red : null)),
+                                      ],
+                                    ),
+                                  ),
+                                  PopupMenuItem<BlockType?>(
+                                    value: BlockType.cultural,
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.museum_outlined, size: 18, color: _filterType == BlockType.cultural ? Colors.blue : Colors.grey),
+                                        const SizedBox(width: 8),
+                                        Text('문화 구역', style: TextStyle(fontWeight: _filterType == BlockType.cultural ? FontWeight.bold : FontWeight.normal, color: _filterType == BlockType.cultural ? Colors.blue : null)),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              );
+                              if (result != _filterType) {
+                                setState(() => _filterType = result);
+                                _applyFilterToOverlays();
+                              }
+                            },
+                            child: Container(
+                              key: _filterButtonKey,
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: _filterType != null ? Colors.black : Colors.white,
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withAlpha(13),
+                                    blurRadius: 4,
+                                  )
+                                ],
+                              ),
+                              child: Row(
+                                children: [
+                                  Text(
+                                    _filterType == null ? '필터' : (_filterType == BlockType.hazard ? '위험 구역' : '문화 구역'),
+                                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: _filterType != null ? Colors.white : Colors.black),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Icon(Icons.keyboard_arrow_down, size: 16, color: _filterType != null ? Colors.white : Colors.black),
+                                ],
+                              ),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -388,7 +542,10 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                                 )
                               ],
                             ),
-                            child: const Text('결과 99개', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                            child: Text(
+                              '결과 ${_filteredBlocks.length}개',
+                              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                            ),
                           ),
                         ],
                       ),
@@ -475,74 +632,73 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                         child: ListView.separated(
                           controller: scrollController,
                           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                          itemCount: _savedBlocks.length + 10, // 임시 표시
+                          itemCount: _filteredBlocks.isEmpty ? 1 : _filteredBlocks.length,
                           separatorBuilder: (context, index) => const SizedBox(height: 12),
                           itemBuilder: (context, index) {
-                            if (index < _savedBlocks.length) {
-                              final block = _savedBlocks[index];
-                              return Container(
+                            if (_filteredBlocks.isEmpty) {
+                              return Padding(
+                                padding: const EdgeInsets.only(top: 40.0),
+                                child: Center(
+                                  child: Text(
+                                    _filterType == null
+                                        ? '등록된 정보가 없습니다.\n지도를 탭하여 정보를 등록해보세요.'
+                                        : (_filterType == BlockType.hazard ? '이 범위에 위험 구역이 없습니다.' : '이 범위에 문화 구역이 없습니다.'),
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(color: Colors.grey, height: 1.5),
+                                  ),
+                                ),
+                              );
+                            }
+
+                            final block = _filteredBlocks[index];
+                            return GestureDetector(
+                              onTap: () {
+                                if (_mapController != null) {
+                                  final cameraUpdate = NCameraUpdate.withParams(
+                                    target: block.center,
+                                    zoom: 15,
+                                  );
+                                  cameraUpdate.setAnimation(
+                                    animation: NCameraAnimation.fly, 
+                                    duration: const Duration(milliseconds: 500)
+                                  );
+                                  _mapController!.updateCamera(cameraUpdate);
+                                }
+                              },
+                              child: Container(
                                 height: 80,
                                 decoration: BoxDecoration(
                                   color: const Color(0xFFF5F5F5),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Row(
-                                  children: [
-                                    Container(
-                                      width: 80,
-                                      decoration: BoxDecoration(
-                                        color: block.type == BlockType.hazard ? Colors.red.withOpacity(0.2) : Colors.blue.withOpacity(0.2),
-                                        borderRadius: const BorderRadius.horizontal(left: Radius.circular(12)),
-                                      ),
-                                      child: Icon(
-                                        block.type == BlockType.hazard ? Icons.warning : Icons.museum,
-                                        color: block.type == BlockType.hazard ? Colors.red : Colors.blue,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        mainAxisAlignment: MainAxisAlignment.center,
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(block.type == BlockType.hazard ? '위험 구역' : '문화적 명소', style: const TextStyle(fontWeight: FontWeight.bold)),
-                                          const SizedBox(height: 4),
-                                          Text(block.comment, style: const TextStyle(color: Colors.grey, fontSize: 12), overflow: TextOverflow.ellipsis,),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }
-                            // 더미 아이템
-                            return Container(
-                              height: 80,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF5F5F5),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Row(
                                 children: [
                                   Container(
                                     width: 80,
-                                    decoration: const BoxDecoration(
-                                      color: Color(0xFFE0E0E0),
-                                      borderRadius: BorderRadius.horizontal(left: Radius.circular(12)),
+                                    decoration: BoxDecoration(
+                                      color: block.type == BlockType.hazard ? Colors.red.withOpacity(0.2) : Colors.blue.withOpacity(0.2),
+                                      borderRadius: const BorderRadius.horizontal(left: Radius.circular(12)),
+                                    ),
+                                    child: Icon(
+                                      block.type == BlockType.hazard ? Icons.warning : Icons.museum,
+                                      color: block.type == BlockType.hazard ? Colors.red : Colors.blue,
                                     ),
                                   ),
                                   const SizedBox(width: 12),
-                                  Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text('더미 장소 이름 \$index', style: const TextStyle(fontWeight: FontWeight.bold)),
-                                      const SizedBox(height: 4),
-                                      const Text('장소에 대한 간단한 설명입니다.', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                                    ],
+                                  Expanded(
+                                    child: Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(block.type == BlockType.hazard ? '위험 구역' : '문화적 명소', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                        const SizedBox(height: 4),
+                                        Text(block.comment, style: const TextStyle(color: Colors.grey, fontSize: 12), overflow: TextOverflow.ellipsis,),
+                                      ],
+                                    ),
                                   ),
                                 ],
                               ),
+                            ),
                             );
                           },
                         ),
