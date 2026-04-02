@@ -38,6 +38,7 @@ dependencies:
   flutter_naver_map: ^1.4.4
   dio: ^5.9.2
   shared_preferences: ^2.5.5
+  image_picker: ^1.2.1
 
 dev_dependencies:
   flutter_test:

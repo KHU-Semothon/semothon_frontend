@@ -5,15 +5,22 @@ class CommunityPost {
   final String username;
   final bool isVerified;
   final String title;
-  final String preview; // 미리보기 본문
-  final String timeAgo; // 서버에서 "N분 전" 형태로 내려주거나 클라이언트에서 계산
+  final String preview;
+  final String timeAgo;
   final int likes;
   final int comments;
   final int bookmarks;
   final bool hasThumbnail;
-  final String category; // 식당·화장실·쇼핑·유적
-  final String country;  // 일본·중국·미국·영국
+  final String category;
+  final String country;
   final DateTime createdAt;
+  final double? latitude;
+  final double? longitude;
+  final String? address;
+  // 작성자 부가 정보 (서버에서 내려줄 때만 사용)
+  final double? authorTrustScore;   // 0~100
+  final int?    authorLivingYears;
+  final int?    authorVisitCount;
 
   const CommunityPost({
     required this.id,
@@ -29,6 +36,12 @@ class CommunityPost {
     required this.category,
     required this.country,
     required this.createdAt,
+    this.latitude,
+    this.longitude,
+    this.address,
+    this.authorTrustScore,
+    this.authorLivingYears,
+    this.authorVisitCount,
   });
 
   // ── 서버 → 앱 (JSON 역직렬화) ─────────────────────────────────
@@ -47,6 +60,13 @@ class CommunityPost {
       category:     json['category'] as String? ?? '',
       country:      json['country'] as String? ?? '',
       createdAt:    DateTime.tryParse(json['createdAt'] as String? ?? '') ?? DateTime.now(),
+      latitude:           (json['latitude']  as num?)?.toDouble(),
+      longitude:          (json['longitude'] as num?)?.toDouble(),
+      address:            json['address']    as String?,
+      // 작성자 부가 정보 (API 명세: authorTrustScore, authorLivingYears, authorVisitCount)
+      authorTrustScore:   (json['authorTrustScore']  as num?)?.toDouble(),
+      authorLivingYears:  (json['authorLivingYears'] as num?)?.toInt(),
+      authorVisitCount:   (json['authorVisitCount']  as num?)?.toInt(),
     );
   }
 
@@ -64,5 +84,8 @@ class CommunityPost {
     'category':     category,
     'country':      country,
     'createdAt':    createdAt.toIso8601String(),
+    if (latitude  != null) 'latitude':  latitude,
+    if (longitude != null) 'longitude': longitude,
+    if (address   != null) 'address':   address,
   };
 }

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_naver_map/flutter_naver_map.dart';
 import '../widgets/custom_search_bar.dart';
 import '../models/map_block.dart';
+import '../models/save_folder.dart';
 import '../services/api_service.dart';
 
 class MapHomeScreen extends StatefulWidget {
@@ -14,11 +15,19 @@ class MapHomeScreen extends StatefulWidget {
   State<MapHomeScreen> createState() => _MapHomeScreenState();
 }
 
+// 등록 단계 (UI 개편 반영)
+enum _RegStep { none, setPin, fillInfo }
+
 class _MapHomeScreenState extends State<MapHomeScreen> {
   final TextEditingController _searchController = TextEditingController();
   final ApiService _api = ApiService();
-  bool isRegistrationMode = false;
+
+  // 등록 단계 (none → fillInfo → setPin)
+  _RegStep _regStep = _RegStep.none;
+  bool get isRegistrationMode => _regStep != _RegStep.none;
+
   bool _isLoading = false;       // 서버 통신 중 로딩 표시 여부
+  bool _isInitialLoading = true; // 앱 시작 시 초기 데이터 로드 중 여부
   NaverMapController? _mapController;
   Timer? _debounceTimer;         // 카메라 정지 후 서버 요청 debounce용
 
@@ -29,15 +38,164 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
   NCircleOverlay? _currentDrawingCircle;
   NMarker? _centerMarker;
 
-  // 필터: null = 전체, BlockType.hazard = 위험구역, BlockType.cultural = 문화구역
+  // Step1 에서 입력한 영역 정보
+  BlockType _pendingType = BlockType.hazard;
+  final TextEditingController _commentController = TextEditingController();
+
   BlockType? _filterType;
-  // 필터 버튼의 정확한 화면 위치를 얻기 위한 GlobalKey
   final GlobalKey _filterButtonKey = GlobalKey();
 
-  /// 현재 필터 설정에 맞게 걸러진 블록 목록
-  List<MapBlock> get _filteredBlocks => _filterType == null
-      ? _savedBlocks
-      : _savedBlocks.where((b) => b.type == _filterType).toList();
+  // 개인적으로 숨긴 블록 ID 목록 (위험/문화 구역 숨기기용)
+  final Set<String> _hiddenBlockIds = {};
+
+  // 폴더 게시물 마커
+  final List<NMarker> _folderPostMarkers = [];
+  String? _activeFolderName; // 현재 활성 폴더 이름 (UI 표시용)
+
+  /// 현재 필터 설정 및 숨김 설정을 반영하여 걸러진 블록 목록
+  List<MapBlock> get _filteredBlocks {
+    final base = _filterType == null
+        ? _savedBlocks
+        : _savedBlocks.where((b) => b.type == _filterType).toList();
+    return base.where((b) => !_hiddenBlockIds.contains(b.id)).toList();
+  }
+
+  /// 폴더 선택 시 해당 폴더의 위치 있는 게시물을 마커로 표시
+  Future<void> _loadFolderMarkers(SaveFolder folder) async {
+    if (_mapController == null) return;
+
+    // 기존 마커 제거
+    for (final m in _folderPostMarkers) {
+      await _mapController!.deleteOverlay(m.info);
+    }
+    _folderPostMarkers.clear();
+
+    // 같은 폴더 재선택 시 토글 해제
+    if (_activeFolderName == folder.name) {
+      setState(() => _activeFolderName = null);
+      return;
+    }
+
+    setState(() => _activeFolderName = folder.name);
+
+    try {
+      final posts = await _api.getPostsInFolder(folder.id);
+      final withLocation = posts.where(
+        (p) => p.latitude != null && p.longitude != null,
+      ).toList();
+
+      for (int i = 0; i < withLocation.length; i++) {
+        final post = withLocation[i];
+        final marker = NMarker(
+          id: 'folder_post_$i',
+          position: NLatLng(post.latitude!, post.longitude!),
+          iconTintColor: Colors.blue,
+          size: const Size(22, 30),
+          caption: NOverlayCaption(
+            text: post.title.length > 8 ? '${post.title.substring(0, 8)}...' : post.title,
+            textSize: 10,
+          ),
+        );
+        await _mapController!.addOverlay(marker);
+        _folderPostMarkers.add(marker);
+      }
+
+      if (mounted && withLocation.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('위치 정보가 있는 게시물이 없습니다.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('게시물 로드 실패: $e')),
+        );
+      }
+    }
+  }
+
+  /// 폴더 선택 바텀시트
+  void _showFolderPickerSheet() async {
+    List<SaveFolder> folders = [];
+    try {
+      folders = await _api.getFolders();
+    } catch (_) {}
+
+    if (!mounted) return;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('폴더를 선택하세요', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  if (_activeFolderName != null)
+                    GestureDetector(
+                      onTap: () async {
+                        Navigator.pop(ctx);
+                        for (final m in _folderPostMarkers) {
+                          await _mapController?.deleteOverlay(m.info);
+                        }
+                        _folderPostMarkers.clear();
+                        setState(() => _activeFolderName = null);
+                      },
+                      child: const Text('마커 지우기', style: TextStyle(fontSize: 13, color: Colors.red)),
+                    ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            if (folders.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(24),
+                child: Center(child: Text('저장된 폴더가 없습니다', style: TextStyle(color: Colors.grey))),
+              )
+            else
+              ListView.separated(
+                shrinkWrap: true,
+                itemCount: folders.length,
+                separatorBuilder: (_, __) => const Divider(height: 1, indent: 20, endIndent: 20),
+                itemBuilder: (_, i) {
+                  final folder = folders[i];
+                  final isActive = _activeFolderName == folder.name;
+                  return ListTile(
+                    leading: Icon(
+                      Icons.folder_outlined,
+                      color: isActive ? Colors.blue : Colors.grey,
+                    ),
+                    title: Text(
+                      folder.name,
+                      style: TextStyle(
+                        fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                        color: isActive ? Colors.blue : Colors.black,
+                      ),
+                    ),
+                    subtitle: Text('게시물 ${folder.postCount}개', style: const TextStyle(fontSize: 12)),
+                    trailing: isActive ? const Icon(Icons.check, color: Colors.blue, size: 18) : null,
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _loadFolderMarkers(folder);
+                    },
+                  );
+                },
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
 
   void _clearDrawing() {
     _selectedCenter = null;
@@ -52,6 +210,14 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
         _currentDrawingCircle = null;
       }
     }
+  }
+
+  /// 등록 모드 전체 초기화 (취소 or 완료)
+  void _exitRegistration() {
+    _clearDrawing();
+    _commentController.clear();
+    _pendingType = BlockType.hazard;
+    setState(() => _regStep = _RegStep.none);
   }
 
   void _updateDrawingOverlay() {
@@ -71,58 +237,115 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
     _centerMarker = NMarker(
       id: "temp_center_marker", 
       position: _selectedCenter!,
+      iconTintColor: _getPinColor(_pendingType),
       size: const Size(20, 28),
     );
     _mapController!.addOverlay(_centerMarker!);
 
-    // 반경 원형 표시
-    _currentDrawingCircle = NCircleOverlay(
-      id: "drawing_temp_circle",
-      center: _selectedCenter!,
-      radius: _currentRadius,
-      color: Colors.black.withOpacity(0.35),
-      outlineColor: Colors.black,
-      outlineWidth: 3,
-    );
-    _mapController!.addOverlay(_currentDrawingCircle!);
+    // 반경 원형 표시 (좌표가 있고, 핀 유형이 아닐 때만 표시)
+    final bool isPin = _pendingType != BlockType.hazard && _pendingType != BlockType.cultural;
+    final bool showCircle = !isPin;
+
+    if (showCircle) {
+      _currentDrawingCircle = NCircleOverlay(
+        id: "drawing_temp_circle",
+        center: _selectedCenter!,
+        radius: _currentRadius,
+        color: Colors.black.withValues(alpha: 0.35),
+        outlineColor: Colors.black,
+        outlineWidth: 3,
+      );
+      _mapController!.addOverlay(_currentDrawingCircle!);
+    }
   }
 
-  // 새로 등록된 1개의 블록만 즉시 맵에 추가 (불필요한 전체 삭제 방지)
+  /// 블록/핀 오버레이를 지도에 추가합니다.
   void _addBlockOverlay(MapBlock block) {
     if (_mapController == null) return;
-    
-    final bgColor = block.type == BlockType.hazard 
-        ? Colors.red.withOpacity(0.35) 
-        : Colors.blue.withOpacity(0.35);
-    final borderColor = block.type == BlockType.hazard 
-        ? Colors.red 
-        : Colors.blue;
-        
-    final circle = NCircleOverlay(
-      id: block.id,
-      center: block.center,
-      radius: block.radius,
-      color: bgColor,
-      outlineColor: borderColor,
-      outlineWidth: 3,
-    );
-    
-    circle.setOnTapListener((overlay) {
-      _showCommentDialog(block);
-    });
-    
-    try {
-      _mapController!.addOverlay(circle);
-    } catch (e) {
-      debugPrint('단일 오버레이 추가 에러: $e');
+
+    if (block.isPin) {
+      // 핀 유형: 색상이 다른 마커(핀)를 꼽음 (사용자 요청 반영)
+      final pinColor = _getPinColor(block.type);
+      final marker = NMarker(
+        id: block.id,
+        position: block.center,
+        iconTintColor: pinColor,
+      );
+      marker.setOnTapListener((_) => _showCommentDialog(block));
+      _mapController!.addOverlay(marker);
+    } else {
+      // 범위 유형: 기존과 동일한 원형 오버레이 표시
+      final bgColor = block.type == BlockType.hazard 
+          ? Colors.red.withValues(alpha: 0.35) 
+          : Colors.blue.withValues(alpha: 0.35);
+      final borderColor = block.type == BlockType.hazard 
+          ? Colors.red 
+          : Colors.blue;
+          
+      final circle = NCircleOverlay(
+        id: block.id,
+        center: block.center,
+        radius: block.radius,
+        color: bgColor,
+        outlineColor: borderColor,
+        outlineWidth: 3,
+      );
+      
+      circle.setOnTapListener((overlay) => _showCommentDialog(block));
+      
+      try {
+        _mapController!.addOverlay(circle);
+      } catch (e) {
+        debugPrint('오버레이 추가 에러: $e');
+      }
+    }
+  }
+
+  // 핀 유형별 아이콘 반환
+  IconData _getPinIcon(BlockType type) {
+    switch (type) {
+      case BlockType.restaurant: return Icons.restaurant;
+      case BlockType.cafe: return Icons.local_cafe;
+      case BlockType.tip: return Icons.lightbulb_outline;
+      case BlockType.other: return Icons.push_pin;
+      case BlockType.hazard: return Icons.warning_amber_rounded;
+      case BlockType.cultural: return Icons.museum;
+    }
+  }
+
+  // 핀 유형별 색상 반환
+  Color _getPinColor(BlockType type) {
+    switch (type) {
+      case BlockType.restaurant: return Colors.orange;
+      case BlockType.cafe: return Colors.brown;
+      case BlockType.tip: return Colors.amber;
+      case BlockType.other: return Colors.blueGrey;
+      case BlockType.hazard: return Colors.red;
+      case BlockType.cultural: return Colors.blue;
+    }
+  }
+
+  // 유형별 한국어 라벨 반환
+  String _getTypeLabel(BlockType type) {
+    switch (type) {
+      case BlockType.hazard: return '위험 구역';
+      case BlockType.cultural: return '문화 구역';
+      case BlockType.restaurant: return '맛집';
+      case BlockType.cafe: return '카페';
+      case BlockType.tip: return '꿀팁';
+      case BlockType.other: return '기타';
     }
   }
 
   /// 현재 화면 경계 좌표를 기반으로 서버에서 구역 목록을 불러와 지도와 리스트에 반영합니다.
   /// debounce가 적용되어 있어 연속된 카메라 이동 중 중복 호출을 방지합니다.
-  void _fetchBlocksInCurrentBounds() {
+  /// 현재 화면 경계 좌표를 기반으로 서버에서 구역 목록을 불러와 지도와 리스트에 반영합니다.
+  /// [isInitial]이 true일 경우, 로딩 화면을 표시하며 debounce를 건너뛰고 즉시 호출합니다.
+  void _fetchBlocksInCurrentBounds({bool isInitial = false}) {
+    if (isInitial) setState(() => _isInitialLoading = true);
+
     _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 300), () async {
+    _debounceTimer = Timer(Duration(milliseconds: isInitial ? 0 : 300), () async {
       if (_mapController == null || !mounted) return;
       try {
         final bounds = await _mapController!.getContentBounds();
@@ -134,9 +357,7 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
         );
         if (!mounted) return;
         // 기존 오버레이 전부 삭제 후 새로운 범위 결과로 오버레이 재구성
-        for (final b in _savedBlocks) {
-          try { _mapController!.deleteOverlay(NOverlayInfo(type: NOverlayType.circleOverlay, id: b.id)); } catch (_) {}
-        }
+        _clearOverlays(_savedBlocks);
         setState(() => _savedBlocks
           ..clear()
           ..addAll(blocks));
@@ -145,19 +366,92 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
         }
       } catch (e) {
         debugPrint('구역 조회 오류: $e');
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _isInitialLoading = false;
+          });
+        }
       }
     });
+  }
+
+  /// 지도 오버레이 제거 헬퍼
+  void _clearOverlays(List<MapBlock> blocks) {
+    if (_mapController == null) return;
+    for (final b in blocks) {
+      final type = b.isPin ? NOverlayType.marker : NOverlayType.circleOverlay;
+      try {
+        _mapController!.deleteOverlay(NOverlayInfo(type: type, id: b.id));
+      } catch (_) {}
+    }
   }
 
   /// 필터 변경 시 지도 오버레이를 현재 필터에 맞게 동기화합니다.
   void _applyFilterToOverlays() {
     if (_mapController == null) return;
     // 전체 오버레이 제거 후 필터에 맞는 항목만 다시 표시
-    for (final b in _savedBlocks) {
-      try { _mapController!.deleteOverlay(NOverlayInfo(type: NOverlayType.circleOverlay, id: b.id)); } catch (_) {}
-    }
+    _clearOverlays(_savedBlocks);
     for (final b in _filteredBlocks) {
       _addBlockOverlay(b);
+    }
+  }
+
+  /// 삭제 로직 (핀은 서버 삭제, 공유 구역은 개인 숨기기)
+  Future<void> _deleteBlock(MapBlock block) async {
+    final bool confirm = await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('정보 삭제', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        content: Text(block.isPin 
+          ? '이 정보를 정말 삭제하시겠습니까?' 
+          : '이 정보를 내 리스트와 지도에서 숨기시겠습니까?\n(공유 구역은 커뮤니티 투표로만 서버에서 삭제됩니다)'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('확인', style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    ) ?? false;
+
+    if (!confirm) return;
+
+    try {
+      if (block.isPin) {
+        await _api.deleteBlock(block.id);
+        setState(() => _savedBlocks.removeWhere((b) => b.id == block.id));
+      } else {
+        setState(() => _hiddenBlockIds.add(block.id));
+      }
+      
+      _applyFilterToOverlays();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(block.isPin ? '정보가 삭제되었습니다.' : '정보가 숨겨졌습니다.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('에러: $e')));
+    }
+  }
+
+  /// 투표 기능 (유지/삭제)
+  Future<void> _voteBlock(MapBlock block, bool isKeep) async {
+    try {
+      final updated = await _api.voteBlock(block.id, isKeep);
+      setState(() {
+        final idx = _savedBlocks.indexWhere((b) => b.id == block.id);
+        if (idx != -1) _savedBlocks[idx] = updated;
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(isKeep ? '유지 투표가 완료되었습니다.' : '삭제 투표가 완료되었습니다.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('투표 에러: $e')));
     }
   }
 
@@ -165,124 +459,114 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
     showDialog(
       context: context,
       builder: (context) {
-        final typeText = block.type == BlockType.hazard ? '⚠️ 위험 정보' : '🏛️ 문화적 정보';
-        final typeColor = block.type == BlockType.hazard ? Colors.red : Colors.blue;
-        return AlertDialog(
-          title: Text(typeText, style: TextStyle(color: typeColor, fontWeight: FontWeight.bold)),
-          content: Text(block.comment),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('닫기')),
-          ],
-        );
-      }
-    );
-  }
-
-  void _showRegistrationDialog() {
-    BlockType selectedType = BlockType.hazard;
-    String comment = '';
-    
-    showDialog(
-      context: context,
-      builder: (context) {
+        final label = _getTypeLabel(block.type);
+        final color = _getPinColor(block.type);
+        
         return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('정보 등록'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
+          builder: (context, setDialogState) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('$label 정보', style: TextStyle(color: color, fontWeight: FontWeight.bold)),
+                if (!block.isPin) ...[
+                  const SizedBox(height: 4),
+                  Text(block.remainingTimeString, style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.normal)),
+                ],
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(block.comment, style: const TextStyle(fontSize: 15, height: 1.5)),
+                if (!block.isPin) ...[
+                  const SizedBox(height: 24),
+                  const Divider(),
+                  const SizedBox(height: 12),
+                  const Text('커뮤니티 투표', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
                   Row(
                     children: [
                       Expanded(
-                        child: RadioListTile<BlockType>(
-                          title: const Text('위험', style: TextStyle(fontSize: 14)),
-                          value: BlockType.hazard,
-                          groupValue: selectedType,
-                          onChanged: (val) => setDialogState(() => selectedType = val!),
+                        child: Column(
+                          children: [
+                            Text('${block.keepVotes}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
+                            const Text('유지', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                          ],
                         ),
                       ),
                       Expanded(
-                        child: RadioListTile<BlockType>(
-                          title: const Text('문화', style: TextStyle(fontSize: 14)),
-                          value: BlockType.cultural,
-                          groupValue: selectedType,
-                          onChanged: (val) => setDialogState(() => selectedType = val!),
+                        flex: 3,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: LinearProgressIndicator(
+                            value: block.totalVotes == 0 ? 0.5 : block.keepVotes / block.totalVotes,
+                            backgroundColor: Colors.red.withAlpha(50),
+                            valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
+                            minHeight: 8,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            Text('${block.removeVotes}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+                            const Text('삭제', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                          ],
                         ),
                       ),
                     ],
                   ),
-                  TextField(
-                    decoration: const InputDecoration(
-                      labelText: '코멘트',
-                      hintText: '이 지역에 대한 정보를 입력하세요',
-                    ),
-                    maxLines: 3,
-                    onChanged: (val) => comment = val,
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () async {
+                            await _voteBlock(block, true);
+                            setDialogState(() {});
+                          },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.blue,
+                            side: const BorderSide(color: Colors.blue),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          child: const Text('유지 투표'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () async {
+                            await _voteBlock(block, false);
+                            setDialogState(() {});
+                          },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.red,
+                            side: const BorderSide(color: Colors.red),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          child: const Text('삭제 투표'),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('취소'),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.black, foregroundColor: Colors.white),
-                  onPressed: () async {
-                    if (comment.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('코멘트를 입력해주세요.')));
-                      return;
-                    }
-
-                    final block = MapBlock(
-                      id: DateTime.now().millisecondsSinceEpoch.toString(),
-                      center: _selectedCenter!,
-                      radius: _currentRadius,
-                      type: selectedType,
-                      comment: comment,
-                      createdAt: DateTime.now(),
-                    );
-
-                    Navigator.pop(context);
-                    setState(() {
-                      isRegistrationMode = false;
-                      _isLoading = true;
-                      _clearDrawing();
-                    });
-
-                    try {
-                      // 서버(또는 Mock)에 구역 저장 → 다른 사용자와 공유
-                      await _api.postBlock(block);
-                      // 로컬에도 즉시 반영
-                      setState(() {
-                        _savedBlocks.add(block);
-                      });
-                      _addBlockOverlay(block);
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('정보가 등록되었습니다.')),
-                        );
-                      }
-                    } catch (e) {
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('등록 실패: $e')),
-                        );
-                      }
-                    } finally {
-                      if (mounted) setState(() => _isLoading = false);
-                    }
-                  },
-                  child: const Text('저장'),
-                ),
               ],
-            );
-          }
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context), 
+                child: const Text('닫기', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
         );
       }
     );
   }
+
 
   // 지역 검색 및 카메라 이동 함수 (OpenStreetMap Nominatim API 활용 - 무료, 키 없음)
   Future<void> _searchAndMove(String query) async {
@@ -367,6 +651,7 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
   void dispose() {
     _debounceTimer?.cancel();
     _searchController.dispose();
+    _commentController.dispose();
     super.dispose();
   }
 
@@ -375,7 +660,7 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
     return Scaffold(
       body: Stack(
         children: [
-          // Naver Map
+          // Naver Map (지도는 항상 렌더링되어야 onMapReady 가 호출됩니다)
           NaverMap(
             options: const NaverMapViewOptions(
               initialCameraPosition: NCameraPosition(
@@ -386,11 +671,11 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
             onMapReady: (controller) {
               _mapController = controller;
               debugPrint("네이버 지도 로딩 완료");
-              // 지도 준비 완료 후 현재 화면 범위의 구역 즉시 로딩
-              _fetchBlocksInCurrentBounds();
+              // 지도 준비 완료 후 현재 화면 범위의 구역 즉시 로딩 (로딩 화면 표시)
+              _fetchBlocksInCurrentBounds(isInitial: true);
             },
             onCameraChange: (reason, animated) async {
-              if (isRegistrationMode && _selectedCenter != null && _mapController != null) {
+              if (_regStep == _RegStep.setPin && _selectedCenter != null && _mapController != null) {
                 // 패닝 시 핀이 화면 중앙(카메라 타겟)을 따라가도록 위치 업데이트
                 final cameraPos = await _mapController!.getCameraPosition();
                 _selectedCenter = cameraPos.target;
@@ -399,24 +684,20 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
               }
             },
             onCameraIdle: () async {
-              if (isRegistrationMode && _selectedCenter != null && _mapController != null) {
+              if (_regStep == _RegStep.setPin && _selectedCenter != null && _mapController != null) {
                 // 등록 모드: 핀 위치를 카메라 중심점으로 업데이트
                 final cameraPos = await _mapController!.getCameraPosition();
-                setState(() {
-                  _selectedCenter = cameraPos.target;
-                });
-              } else if (!isRegistrationMode) {
+                setState(() => _selectedCenter = cameraPos.target);
+              } else if (_regStep == _RegStep.none) {
                 // 일반 모드: 화면 범위 기반으로 구역 재조회
                 _fetchBlocksInCurrentBounds();
               }
             },
             onMapTapped: (point, latLng) {
               FocusScope.of(context).unfocus(); // 터치 시 키보드 내리기
-              if (isRegistrationMode) {
-                // 한 점(중심점) 등록
-                setState(() {
-                  _selectedCenter = latLng;
-                });
+              if (_regStep == _RegStep.setPin) {
+                // Step2: 탭한 위치를 중심점으로 설정
+                setState(() => _selectedCenter = latLng);
                 _updateDrawingOverlay();
 
                 // 탭한 위치로 지도의 중앙을 부드럽게 이동시킴
@@ -556,27 +837,59 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                               style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                             ),
                           ),
+                          const SizedBox(width: 8),
+                          // 폴더 마커 버튼
+                          GestureDetector(
+                            onTap: _showFolderPickerSheet,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: _activeFolderName != null ? Colors.blue : Colors.white,
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withAlpha(13),
+                                    blurRadius: 4,
+                                  )
+                                ],
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.folder_outlined,
+                                    size: 14,
+                                    color: _activeFolderName != null ? Colors.white : Colors.black,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    _activeFolderName ?? '내 폴더',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
+                                      color: _activeFolderName != null ? Colors.white : Colors.black,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                       // 동그란 연필 탭 (등록 모드 토글)
                       GestureDetector(
                         onTap: () {
-                          setState(() {
-                            isRegistrationMode = !isRegistrationMode;
-                            if (!isRegistrationMode) {
-                              _clearDrawing(); // 끌 때 그리기 취소
-                            }
-                          });
-                          ScaffoldMessenger.of(context).clearSnackBars();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(isRegistrationMode 
-                                ? '등록 모드가 켜졌습니다. 지도에서 원하는 중심 위치를 탭하세요.' 
-                                : '등록 모드가 꺼졌습니다.'),
-                              duration: const Duration(seconds: 2),
-                              behavior: SnackBarBehavior.floating,
-                            ),
-                          );
+                          if (_regStep == _RegStep.none) {
+                            // 1단계: 정보 입력 (중앙 다이얼로그) 모드 진입
+                            setState(() {
+                              _regStep = _RegStep.fillInfo;
+                              _commentController.clear();
+                              _pendingType = BlockType.hazard;
+                            });
+                          } else {
+                            // 등록 모드 취소
+                            _exitRegistration();
+                            ScaffoldMessenger.of(context).clearSnackBars();
+                          }
                         },
                         child: Container(
                           width: 48,
@@ -586,14 +899,14 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                             shape: BoxShape.circle,
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.15),
+                                color: Colors.black.withValues(alpha: 0.15),
                                 blurRadius: 8,
                                 offset: const Offset(0, 2),
                               )
                             ],
                           ),
                           child: Icon(
-                            Icons.edit,
+                            isRegistrationMode ? Icons.close : Icons.edit,
                             color: isRegistrationMode ? Colors.white : Colors.black,
                             size: 22,
                           ),
@@ -606,8 +919,124 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
             ),
           ),
 
-          // Bottom Draggable Panel (등록 모드가 아닐 때만 노출)
-          if (!isRegistrationMode)
+          // 로딩 오버레이 (서버 저장 중)
+          if (_isLoading)
+            Container(
+              color: Colors.black.withValues(alpha: 0.3),
+              child: const Center(
+                child: CircularProgressIndicator(color: Colors.white),
+              ),
+            ),
+
+          // ── Step 1: 정보 남기기 중앙 팝업 (이미지 기반 UI) ──────────────────────
+          if (_regStep == _RegStep.fillInfo)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black.withValues(alpha: 0.5), // 배경 어둡게
+                child: Center(
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 40),
+                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(28),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        const Text(
+                          '정보 남기기',
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 20),
+                        
+                        // 반경 설정 (주의, 문화)
+                        _buildSectionHeader('반경 설정'),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            _buildDialogTypeButton(BlockType.hazard, '주의'),
+                            const SizedBox(width: 12),
+                            _buildDialogTypeButton(BlockType.cultural, '문화'),
+                          ],
+                        ),
+                        
+                        const SizedBox(height: 16),
+                        // 핀 설정 (맛집, 카페, 꿀팁, 기타)
+                        _buildSectionHeader('핀 설정'),
+                        const SizedBox(height: 12),
+                        Column(
+                          children: [
+                            Row(
+                              children: [
+                                _buildDialogTypeButton(BlockType.restaurant, '맛집'),
+                                const SizedBox(width: 12),
+                                _buildDialogTypeButton(BlockType.cafe, '카페'),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                _buildDialogTypeButton(BlockType.tip, '꿀팁'),
+                                const SizedBox(width: 12),
+                                _buildDialogTypeButton(BlockType.other, '기타'),
+                              ],
+                            ),
+                          ],
+                        ),
+                        
+                        const SizedBox(height: 16),
+                        _buildSectionHeader('내용'),
+                        const SizedBox(height: 4),
+                        TextField(
+                          controller: _commentController,
+                          decoration: InputDecoration(
+                            hintText: '이 장소에 대해 알려주세요',
+                            hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 13),
+                            enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.grey.shade400)),
+                            focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.black, width: 1.5)),
+                          ),
+                        ),
+                        
+                        const SizedBox(height: 24),
+                        // 하단 버튼들
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            TextButton(
+                              onPressed: () => setState(() => _regStep = _RegStep.none),
+                              child: const Text('취소', style: TextStyle(color: Colors.black, fontWeight: FontWeight.normal)),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: () {
+                                if (_commentController.text.trim().isEmpty) {
+                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('내용을 입력해주세요.')));
+                                  return;
+                                }
+                                setState(() => _regStep = _RegStep.setPin);
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFF0F0F0),
+                                foregroundColor: Colors.black,
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                              ),
+                              child: const Text('다음', style: TextStyle(fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+          // Bottom Draggable Panel (일반 모드일 때만 노출)
+          if (_regStep == _RegStep.none)
             DraggableScrollableSheet(
               initialChildSize: 0.3,
               minChildSize: 0.1,
@@ -637,6 +1066,9 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                         ),
                       ),
                       const SizedBox(height: 16),
+                      // ── 신규 추가: 하단 리스트 필터 스크롤 탭 ──────────────────
+                      _buildFilterTabs(),
+                      const SizedBox(height: 8),
                       Expanded(
                         child: ListView.separated(
                           controller: scrollController,
@@ -651,7 +1083,7 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                                   child: Text(
                                     _filterType == null
                                         ? '등록된 정보가 없습니다.\n지도를 탭하여 정보를 등록해보세요.'
-                                        : (_filterType == BlockType.hazard ? '이 범위에 위험 구역이 없습니다.' : '이 범위에 문화 구역이 없습니다.'),
+                                        : '이 범위에 ${_getTypeLabel(_filterType!)} 정보가 없습니다.',
                                     textAlign: TextAlign.center,
                                     style: const TextStyle(color: Colors.grey, height: 1.5),
                                   ),
@@ -683,14 +1115,20 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                                 child: Row(
                                 children: [
                                   Container(
-                                    width: 80,
+                                    width: 48,
                                     decoration: BoxDecoration(
-                                      color: block.type == BlockType.hazard ? Colors.red.withOpacity(0.2) : Colors.blue.withOpacity(0.2),
+                                      color: _getPinColor(block.type).withValues(alpha: 0.2),
                                       borderRadius: const BorderRadius.horizontal(left: Radius.circular(12)),
                                     ),
-                                    child: Icon(
-                                      block.type == BlockType.hazard ? Icons.warning : Icons.museum,
-                                      color: block.type == BlockType.hazard ? Colors.red : Colors.blue,
+                                    child: Center(
+                                      child: Container(
+                                        width: 12,
+                                        height: 12,
+                                        decoration: BoxDecoration(
+                                          color: _getPinColor(block.type),
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(width: 12),
@@ -699,83 +1137,159 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                                       mainAxisAlignment: MainAxisAlignment.center,
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Text(block.type == BlockType.hazard ? '위험 구역' : '문화적 명소', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                        Row(
+                                          children: [
+                                            Text(_getTypeLabel(block.type), style: const TextStyle(fontWeight: FontWeight.bold)),
+                                            const SizedBox(width: 6),
+                                            if (!block.isPin) // 공유 구역만 잔여 시간 표시
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: Colors.white,
+                                                borderRadius: BorderRadius.circular(4),
+                                                border: Border.all(color: Colors.grey.shade300),
+                                              ),
+                                              child: Text(
+                                                block.remainingTimeString,
+                                                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.redAccent),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                         const SizedBox(height: 4),
                                         Text(block.comment, style: const TextStyle(color: Colors.grey, fontSize: 12), overflow: TextOverflow.ellipsis,),
                                       ],
                                     ),
                                   ),
+                                  // 삭제/숨기기 버튼
+                                  IconButton(
+                                    onPressed: () => _deleteBlock(block),
+                                    icon: Icon(Icons.delete_outline, color: Colors.grey[400], size: 20),
+                                  ),
+                                  const SizedBox(width: 8),
                                 ],
                               ),
                             ),
-                            );
-                          },
-                        ),
+                          );
+                        },
                       ),
-                    ],
-                  ),
-                );
-              },
-            ),
-            
-          // 구역 설정 반경 슬라이더 & 완료 버튼 (등록 모드 & 중심점 선택 시)
-          if (isRegistrationMode && _selectedCenter != null)
-            Positioned(
-              bottom: 32,
-              left: 24,
-              right: 24,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 15, spreadRadius: 2)
+                    ),
                   ],
                 ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('반경 조절', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                        Text('${_currentRadius.toInt()} m', style: const TextStyle(fontWeight: FontWeight.w800, color: Colors.blue, fontSize: 16)),
-                      ],
-                    ),
+              );
+            },
+          ),
+
+        // ── Step 2: 핀 위치 & 반경 설정 (하단 플로팅 카드) ──────────────────────
+        if (_regStep == _RegStep.setPin)
+          Positioned(
+            bottom: 30,
+            left: 24,
+            right: 24,
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: [
+                  BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 10, spreadRadius: 2),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 범위형 여부에 따른 유동적인 헤더
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        (_pendingType != BlockType.hazard && _pendingType != BlockType.cultural) 
+                          ? '위치 설정' 
+                          : '반경 설정', 
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)
+                      ),
+                      if (!(_pendingType != BlockType.hazard && _pendingType != BlockType.cultural))
+                      Text('${_currentRadius.toInt()} m', style: const TextStyle(fontSize: 14)),
+                    ],
+                  ),
+                  if (!(_pendingType != BlockType.hazard && _pendingType != BlockType.cultural)) ...[
+                    const SizedBox(height: 4),
+                    Text('정보가 적용될 범위를 설정해주세요', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+                    const SizedBox(height: 16),
+                    // 심플한 슬라이더
                     SliderTheme(
                       data: SliderTheme.of(context).copyWith(
-                        trackHeight: 6,
-                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 12),
-                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 24),
+                        trackHeight: 2,
+                        activeTrackColor: Colors.grey.shade300,
+                        inactiveTrackColor: Colors.grey.shade200,
+                        thumbColor: Colors.black,
+                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 10, elevation: 2),
+                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 20),
                       ),
                       child: Slider(
                         value: _currentRadius,
                         min: 10,
                         max: 500,
-                        divisions: 49, // 10m 단위
-                        activeColor: Colors.black,
-                        inactiveColor: Colors.grey.shade300,
                         onChanged: (val) {
-                          setState(() {
-                            _currentRadius = val;
-                          });
+                          setState(() => _currentRadius = val);
                           _updateDrawingOverlay();
                         },
                       ),
                     ),
+                  ] else ...[
                     const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _showRegistrationDialog,
-                        icon: const Icon(Icons.check, color: Colors.white),
-                        label: const Text('현재 영역에 정보 등록하기', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.black,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
+                    Text('지도 중앙에 핀을 위치시켜주세요', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+                  ],
+                  const SizedBox(height: 20),
+                  // 최종 등록 버튼
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _submitRegistration,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.grey.shade200,
+                        foregroundColor: Colors.black,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.check, size: 18),
+                          const SizedBox(width: 8),
+                          Text(
+                            (_pendingType != BlockType.hazard && _pendingType != BlockType.cultural)
+                              ? '현재 위치에 핀 등록하기'
+                              : '현재 영역에 정보 등록하기', 
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // ── 초기 점체 로딩 오버레이 ──────────────────────────
+          if (_isInitialLoading)
+            Container(
+              color: Colors.white,
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const CircularProgressIndicator(color: Colors.black),
+                    const SizedBox(height: 16),
+                    Text(
+                      '지도를 불러오는 중입니다...',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey[800],
                       ),
                     ),
                   ],
@@ -783,6 +1297,177 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  // 하단 리스트용 가로 스크롤 필터 탭
+  Widget _buildFilterTabs() {
+    final List<BlockType?> items = [
+      null, // 전체
+      BlockType.hazard,
+      BlockType.cultural,
+      BlockType.restaurant,
+      BlockType.cafe,
+      BlockType.tip,
+      BlockType.other,
+    ];
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Row(
+        children: items.map((type) {
+          final isSelected = _filterType == type;
+          final label = type == null ? '전체' : _getTypeLabel(type);
+          final color = type == null ? Colors.black : _getPinColor(type);
+
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: GestureDetector(
+              onTap: () {
+                setState(() => _filterType = type);
+                _applyFilterToOverlays();
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: isSelected ? color : Colors.grey[100],
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: isSelected ? color : Colors.transparent,
+                    width: 1.5,
+                  ),
+                ),
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: isSelected ? Colors.white : Colors.grey[600],
+                  ),
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  // 다이얼로그용 섹션 헤더
+  Widget _buildSectionHeader(String title) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: TextStyle(fontSize: 13, color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+        const SizedBox(height: 4),
+        Divider(color: Colors.grey.shade200, thickness: 1),
+      ],
+    );
+  }
+
+  // 다이얼로그용 버튼 (이미지 스타일)
+  Widget _buildDialogTypeButton(BlockType type, String label) {
+    final isSelected = _pendingType == type;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _pendingType = type),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            color: isSelected ? Colors.black : Colors.grey.shade200,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Center(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+                color: isSelected ? Colors.white : Colors.black,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 저장 전처리 (핀일 경우 반경 0 처리)
+  Future<void> _submitRegistration() async {
+    if (_mapController == null) return;
+    
+    // 최종 위치는 현재 지도 중앙 (UI상 핀 위치)
+    final target = await _mapController!.getCameraPosition().then((p) => p.target);
+    
+    setState(() => _isLoading = true);
+    
+    try {
+      final isPin = _pendingType != BlockType.hazard && _pendingType != BlockType.cultural;
+      
+      final blockToSave = MapBlock(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        center: target,
+        radius: isPin ? 0.0 : _currentRadius,
+        type: _pendingType,
+        comment: _commentController.text,
+        createdAt: DateTime.now(),
+      );
+
+      await _api.postBlock(blockToSave);
+      
+      setState(() {
+        _savedBlocks.add(blockToSave);
+        _exitRegistration(); 
+      });
+      _applyFilterToOverlays();
+      
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('성공적으로 등록되었습니다.')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('등록 실패: $e')));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // 유형 선택용 재사용 버튼 위젯
+  Widget _buildTypeButton({
+    required BlockType type,
+    required String label,
+    required Color activeColor,
+    required StateSetter setLocal,
+  }) {
+    final bool isSelected = _pendingType == type;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () {
+          setState(() => _pendingType = type);
+          setLocal(() {});
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            color: isSelected ? activeColor.withValues(alpha: 0.1) : Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isSelected ? activeColor : Colors.transparent,
+              width: 2,
+            ),
+          ),
+          child: Center(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: isSelected ? activeColor : Colors.grey,
+                fontSize: 14,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import '../models/community_post.dart';
 import '../services/api_service.dart';
 import 'community_filter_screen.dart';
+import 'write_post_screen.dart';
+import 'sign_in_screen.dart';
+import 'post_detail_screen.dart';
 
 class QaScreen extends StatefulWidget {
   const QaScreen({super.key});
@@ -39,12 +42,9 @@ class _QaScreenState extends State<QaScreen> {
         sort: _sortToKey(_sortLabel),
       );
       if (mounted) setState(() => _posts = fetched);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('게시글을 불러오지 못했습니다: $e')),
-        );
-      }
+    } catch (_) {
+      // 서버 오류 시 빈 리스트 유지 (SnackBar 없이 조용히 처리)
+      if (mounted) setState(() => _posts = []);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -275,7 +275,24 @@ class _QaScreenState extends State<QaScreen> {
 
       // ── 글 작성 FAB ──────────────────────────────────────────
       floatingActionButton: FloatingActionButton(
-        onPressed: () {},
+        onPressed: () async {
+          final ctx = context;
+          final loggedIn = await _api.isLoggedIn();
+          if (!mounted) return;
+
+          if (!loggedIn) {
+            Navigator.push(ctx, MaterialPageRoute(builder: (_) => const SignInScreen()));
+            return;
+          }
+
+          final newPost = await Navigator.push<CommunityPost>(
+            ctx,
+            MaterialPageRoute(builder: (_) => const WritePostScreen()),
+          );
+          if (newPost != null && mounted) {
+            setState(() => _posts.insert(0, newPost));
+          }
+        },
         backgroundColor: Colors.white,
         elevation: 3,
         shape: const CircleBorder(),
@@ -313,7 +330,12 @@ class _PostCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onTap: () {},
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => PostDetailScreen(post: post)),
+        );
+      },
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(

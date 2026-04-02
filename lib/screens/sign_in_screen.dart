@@ -163,6 +163,26 @@ class _SignInScreenState extends State<SignInScreen> {
                 },
               ),
               const SizedBox(height: 16),
+              // 비로그인으로 입장
+              GestureDetector(
+                onTap: () {
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(builder: (_) => const MainScaffold(isGuest: true)),
+                  );
+                },
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Text(
+                    '비로그인으로 입장',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ),
+              ),
               // 계정 만들기 링크
               RichText(
                 text: TextSpan(
