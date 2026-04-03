@@ -75,6 +75,11 @@ class ApiService {
 
   /// HTTP 응답을 공통 포맷으로 파싱하고, 에러 시 ApiException을 던집니다.
   Map<String, dynamic> _parse(http.Response res) {
+    final method = res.request?.method ?? '?';
+    final url    = res.request?.url ?? '?';
+    debugPrint('[HTTP] $method $url → ${res.statusCode}');
+    if (res.body.isNotEmpty) debugPrint('[HTTP] body: ${res.body}');
+
     if (res.statusCode >= 200 && res.statusCode < 300) {
       if (res.body.isEmpty) return {};
       return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
@@ -84,6 +89,7 @@ class ApiService {
       final body = jsonDecode(utf8.decode(res.bodyBytes));
       if (body is Map && body['message'] != null) msg = body['message'] as String;
     } catch (_) {}
+    debugPrint('[HTTP] 오류 메시지: $msg');
     throw ApiException(statusCode: res.statusCode, message: msg);
   }
 
@@ -501,7 +507,20 @@ class ApiService {
 
   /// 폴더에 게시물 저장
   Future<void> addPostToFolder(String folderId, String postId) async {
-    await _post('/api/v1/folders/$folderId/questions/$postId');
+    debugPrint('[addPostToFolder] 요청 → folderId="$folderId", postId="$postId"');
+    if (folderId.isEmpty) {
+      debugPrint('[addPostToFolder] ⚠️  folderId가 빈 문자열입니다! 폴더 생성 응답 키를 확인하세요.');
+    }
+    if (postId.isEmpty) {
+      debugPrint('[addPostToFolder] ⚠️  postId가 빈 문자열입니다!');
+    }
+    try {
+      final res = await _post('/api/v1/folders/$folderId/questions/$postId');
+      debugPrint('[addPostToFolder] 성공 응답: $res');
+    } catch (e) {
+      debugPrint('[addPostToFolder] 실패: $e');
+      rethrow;
+    }
   }
 
   /// 폴더에서 게시물 제거 (4-3과 대칭)
