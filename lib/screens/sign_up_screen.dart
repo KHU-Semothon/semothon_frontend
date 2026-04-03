@@ -1,9 +1,71 @@
 import 'package:flutter/material.dart';
 import 'main_scaffold.dart';
 import '../widgets/social_login_button.dart';
+import '../services/api_service.dart';
 
-class SignUpScreen extends StatelessWidget {
+class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
+
+  @override
+  State<SignUpScreen> createState() => _SignUpScreenState();
+}
+
+class _SignUpScreenState extends State<SignUpScreen> {
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _nicknameController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  bool _isLoading = false;
+
+  Future<void> _signUp() async {
+    final email = _emailController.text.trim();
+    final nickname = _nicknameController.text.trim();
+    final password = _passwordController.text.trim();
+
+    if (email.isEmpty || nickname.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('모든 항목을 입력해주세요.')),
+      );
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      await ApiService().signUp(
+        email: email,
+        password: password,
+        nickname: nickname,
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('회원가입이 완료되었습니다. 로그인해주세요.')),
+      );
+      // 로그인 화면으로 돌아가기
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString())),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _nicknameController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -36,14 +98,41 @@ class SignUpScreen extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               const Text(
-                '이 앱에 가입하려면 이메일을 입력하세요',
+                '이 앱에 가입하려면 이메일과 닉네임을 입력하세요',
                 style: TextStyle(
                   fontSize: 14,
                   color: Colors.grey,
                 ),
               ),
               const SizedBox(height: 32),
+              // 닉네임 입력
               TextField(
+                controller: _nicknameController,
+                decoration: InputDecoration(
+                  hintText: 'nickname (닉네임)',
+                  hintStyle: const TextStyle(color: Colors.grey),
+                  filled: true,
+                  fillColor: Colors.white,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Colors.black),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              // 이메일 입력
+              TextField(
+                controller: _emailController,
+                keyboardType: TextInputType.emailAddress,
                 decoration: InputDecoration(
                   hintText: 'email@domain.com',
                   hintStyle: const TextStyle(color: Colors.grey),
@@ -65,7 +154,9 @@ class SignUpScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
+              // 비밀번호 입력
               TextField(
+                controller: _passwordController,
                 obscureText: true,
                 decoration: InputDecoration(
                   hintText: 'password',
@@ -88,6 +179,7 @@ class SignUpScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 16),
+              // 계속(가입) 버튼
               SizedBox(
                 width: double.infinity,
                 height: 50,
@@ -98,22 +190,24 @@ class SignUpScreen extends StatelessWidget {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  onPressed: () {
-                    // 가입 프로세스 후 메인으로 이동
-                    Navigator.pushAndRemoveUntil(
-                      context,
-                      MaterialPageRoute(builder: (_) => const MainScaffold()),
-                      (Route<dynamic> route) => false,
-                    );
-                  },
-                  child: const Text(
-                    '계속',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  onPressed: _isLoading ? null : _signUp,
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Text(
+                          '계속',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                 ),
               ),
               const SizedBox(height: 24),
@@ -130,7 +224,7 @@ class SignUpScreen extends StatelessWidget {
               const SizedBox(height: 24),
               SocialLoginButton(
                 text: 'Google 계정으로 계속하기',
-                icon: Icons.g_mobiledata_rounded, // 임시 아이콘
+                icon: Icons.g_mobiledata_rounded,
                 onPressed: () {
                   Navigator.pushAndRemoveUntil(
                     context,

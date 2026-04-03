@@ -68,5 +68,14 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>지도를 통해 현재 위치 주변의 정보를 확인하고 위험 구역을 등록하기 위해 위치 정보가 필요합니다.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>게시글 작성을 위해 사진 및 동영상을 촬영할 수 있도록 카메라 권한이 필요합니다.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>게시글 작성을 위해 갤러리의 사진 및 동영상을 선택할 수 있도록 권한이 필요합니다.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>동영상 촬영 시 소리를 녹음하기 위해 마이크 권한이 필요합니다.</string>
 </dict>
 </plist>

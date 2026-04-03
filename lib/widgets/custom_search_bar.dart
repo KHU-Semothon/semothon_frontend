@@ -10,6 +10,7 @@ class CustomSearchBar extends StatelessWidget {
   final ValueChanged<String>? onSubmitted;
   final TextEditingController? controller;
   final bool readOnly;
+  final Color? backgroundColor;
 
   const CustomSearchBar({
     super.key,
@@ -22,14 +23,15 @@ class CustomSearchBar extends StatelessWidget {
     this.onSubmitted,
     this.controller,
     this.readOnly = false,
+    this.backgroundColor,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 48,
+      height: 52,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: backgroundColor ?? const Color(0xFFD9D9D9),
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
@@ -73,7 +75,8 @@ class CustomSearchBar extends StatelessWidget {
                          ),
                          style: const TextStyle(
                            color: Colors.black,
-                           fontSize: 15,
+                           fontSize: 16,
+                           fontWeight: FontWeight.w500,
                          ),
                        ),
                  ),

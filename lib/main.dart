@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_naver_map/flutter_naver_map.dart';
+import 'screens/main_scaffold.dart';
 import 'screens/sign_in_screen.dart';
+import 'services/api_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -54,7 +56,34 @@ class MyApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: const SignInScreen(),
+      home: const SplashRouter(),
+    );
+  }
+}
+
+/// 앱 시작 시 로그인 여부에 따라 라우팅
+class SplashRouter extends StatelessWidget {
+  const SplashRouter({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<bool>(
+      future: ApiService().isLoggedIn(),
+      builder: (context, snapshot) {
+        // 로딩 중
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Scaffold(
+            backgroundColor: Colors.white,
+            body: Center(child: CircularProgressIndicator(color: Colors.black, strokeWidth: 2)),
+          );
+        }
+        // 로그인 상태면 메인으로
+        if (snapshot.data == true) {
+          return const MainScaffold();
+        }
+        // 비로그인이면 로그인 화면
+        return const SignInScreen();
+      },
     );
   }
 }

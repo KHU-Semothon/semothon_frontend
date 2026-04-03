@@ -36,7 +36,13 @@ dependencies:
   cupertino_icons: ^1.0.8
   http: ^1.6.0
   flutter_naver_map: ^1.4.4
+<<<<<<< HEAD
   shared_preferences: ^2.3.4
+=======
+  dio: ^5.9.2
+  shared_preferences: ^2.5.5
+  image_picker: ^1.2.1
+>>>>>>> 20076dbd0a1e24d981e4bf4167b2cd71d58d2666
 
 dev_dependencies:
   flutter_test:
