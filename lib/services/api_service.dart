@@ -26,7 +26,7 @@ class ApiException implements Exception {
 // ApiService — 싱글톤
 // ─────────────────────────────────────────────────────────────
 class ApiService {
-  static const String baseUrl = 'https://daramjwi.com';
+  static const String baseUrl = 'http://daramjwi.com';
   static const String _tokenKey = 'accessToken'; // SharedPreferences 키
 
   // 싱글톤
