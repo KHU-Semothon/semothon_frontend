@@ -17,6 +17,7 @@ A beautiful, gray-scale modern Flutter mobile application featuring sign-in, map
 - **Flutter SDK**가 설치되어 있어야 합니다. 
 - iOS 앱 실행을 위해서는 **Xcode** 및 **CocoaPods**가 필요합니다.
 - Android 앱 실행을 위해서는 **Android Studio**가 필요합니다.
+- Windows 데스크톱 앱 실행을 위해서는 **Visual Studio 2022** ('C++를 사용한 데스크톱 개발' 워크로드 포함)가 필요합니다.
 
 ### 2. 패키지 의존성 설치 (Install Dependencies)
 터미널에서 이 프로젝트 폴더(`semothon_frontend`)로 진입한 후 아래 명령어를 실행하여 필요한 패키지를 다운로드 받습니다.
@@ -24,11 +25,12 @@ A beautiful, gray-scale modern Flutter mobile application featuring sign-in, map
 flutter pub get
 ```
 
-### 3. 에뮬레이터/시뮬레이터 실행
-앱을 띄울 가상 기기를 실행하세요.
+### 3. 에뮬레이터/시뮬레이터/데스크톱 실행
+앱을 띄울 환경이나 가상 기기를 준비하세요.
 - **iOS**: Mac에서 `Simulator` 앱을 실행
 - **Android**: Android Studio 내부 Device Manager에서 가상 기기(AVD)를 실행
-*(실제 스마트폰을 USB/WiFi로 연결하셔도 됩니다.)*
+- **Windows**: 별도의 에뮬레이터 없이 본인의 데스크톱 환경에서 바로 실행 가능합니다.
+*(모바일의 경우 실제 스마트폰을 USB/WiFi로 연결하셔도 됩니다.)*
 
 ### 4. 앱 실행 (Run the App)
 명령어 창에 아래 코드를 입력하여 앱을 실행하세요.
