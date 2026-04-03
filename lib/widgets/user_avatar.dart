@@ -46,10 +46,26 @@ class UserAvatar extends StatelessWidget {
       image = const AssetImage('assets/images/default_profile.png');
     }
 
-    return CircleAvatar(
-      radius: radius,
-      backgroundColor: backgroundColor,
-      backgroundImage: image,
+    // 기본 프로필 사진일 경우 배경을 흰색으로 하여 이미지가 돋보이게 함
+    final bgColor = (!useDefault && avatarFile != null) ? backgroundColor : Colors.white;
+
+    return Container(
+      width: radius * 2,
+      height: radius * 2,
+      decoration: BoxDecoration(
+        color: bgColor,
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: Colors.grey.shade300,
+          width: 1.0,
+        ),
+      ),
+      child: ClipOval(
+        child: Image(
+          image: image!,
+          fit: BoxFit.cover, // 혹은 필요에 따라 BoxFit.contain
+        ),
+      ),
     );
   }
 }
