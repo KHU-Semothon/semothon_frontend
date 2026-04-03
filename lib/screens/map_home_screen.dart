@@ -221,9 +221,6 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
     }
   }
 
-<<<<<<< HEAD
-  Future<void> _updateDrawingOverlay() async {
-=======
   /// 등록 모드 전체 초기화 (취소 or 완료)
   void _exitRegistration() {
     _clearDrawing();
@@ -232,8 +229,7 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
     setState(() => _regStep = _RegStep.none);
   }
 
-  void _updateDrawingOverlay() {
->>>>>>> 20076dbd0a1e24d981e4bf4167b2cd71d58d2666
+  Future<void> _updateDrawingOverlay() async {
     if (_mapController == null || _selectedCenter == null) return;
     
     // 기존 임시 오버레이 먼저 완전히 제거 (await로 순서 보장)
@@ -255,63 +251,18 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
     );
     await _mapController!.addOverlay(_centerMarker!);
 
-<<<<<<< HEAD
-    // 반경 원형 표시
-    _currentDrawingCircle = NCircleOverlay(
-      id: "drawing_temp_circle",
-      center: _selectedCenter!,
-      radius: _currentRadius,
-      color: Colors.black.withOpacity(0.35),
-      outlineColor: Colors.black,
-      outlineWidth: 3,
-    );
-    await _mapController!.addOverlay(_currentDrawingCircle!);
-  }
-
-  // 새로 등록된 1개의 블록만 즉시 맵에 추가 (불필요한 전체 삭제 방지)
-  Future<void> _addBlockOverlay(MapBlock block) async {
-    if (_mapController == null) return;
-    
-    final bgColor = block.type == BlockType.hazard 
-        ? Colors.red.withOpacity(0.35) 
-        : Colors.blue.withOpacity(0.35);
-    final borderColor = block.type == BlockType.hazard 
-        ? Colors.red 
-        : Colors.blue;
-        
-    final circle = NCircleOverlay(
-      id: block.id,
-      center: block.center,
-      radius: block.radius,
-      color: bgColor,
-      outlineColor: borderColor,
-      outlineWidth: 3,
-    );
-    
-    circle.setOnTapListener((overlay) {
-      _showCommentDialog(block);
-    });
-    
-    try {
-      await _mapController!.addOverlay(circle);
-    } catch (e) {
-      debugPrint('단일 오버레이 추가 에러: $e');
-=======
-    // 반경 원형 표시 (좌표가 있고, 핀 유형이 아닐 때만 표시)
+    // 반경 원형 표시 (핀 유형이 아닐 때만 표시)
     final bool isPin = _pendingType != BlockType.hazard && _pendingType != BlockType.cultural;
-    final bool showCircle = !isPin;
-
-    if (showCircle) {
+    if (!isPin) {
       _currentDrawingCircle = NCircleOverlay(
         id: "drawing_temp_circle",
         center: _selectedCenter!,
         radius: _currentRadius,
-        color: Colors.black.withValues(alpha: 0.35),
+        color: Colors.black.withOpacity(0.35),
         outlineColor: Colors.black,
         outlineWidth: 3,
       );
-      _mapController!.addOverlay(_currentDrawingCircle!);
->>>>>>> 20076dbd0a1e24d981e4bf4167b2cd71d58d2666
+      await _mapController!.addOverlay(_currentDrawingCircle!);
     }
   }
 
@@ -515,38 +466,6 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
     showDialog(
       context: context,
       builder: (context) {
-<<<<<<< HEAD
-        final typeText = block.type == BlockType.hazard ? '⚠️ 위험 정보' : '🏛️ 문화적 정보';
-        final typeColor = block.type == BlockType.hazard ? Colors.red : Colors.blue;
-        return AlertDialog(
-          title: Text(typeText, style: TextStyle(color: typeColor, fontWeight: FontWeight.bold)),
-          content: Text(block.comment),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('닫기')),
-          ],
-        );
-      }
-    );
-  }
-
-  void _showRegistrationDialog() {
-    BlockType selectedType = BlockType.hazard;
-    String comment = '';
-
-    // ✅ 다이얼로그 context와 분리: pop 이후에도 안전하게 사용하기 위해 미리 캡처
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
-    
-    showDialog(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (dialogContext, setDialogState) {
-            return AlertDialog(
-              title: const Text('정보 등록'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-=======
         final label = _getTypeLabel(block.type);
         final color = _getPinColor(block.type);
         
@@ -574,7 +493,6 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                   const SizedBox(height: 12),
                   const Text('커뮤니티 투표', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
->>>>>>> 20076dbd0a1e24d981e4bf4167b2cd71d58d2666
                   Row(
                     children: [
                       Expanded(
@@ -642,53 +560,7 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                     ],
                   ),
                 ],
-<<<<<<< HEAD
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('취소'),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.black, foregroundColor: Colors.white),
-                  onPressed: () {
-                    if (comment.isEmpty) {
-                      // 다이얼로그 안에서는 dialogContext 사용
-                      scaffoldMessenger.showSnackBar(
-                        const SnackBar(content: Text('코멘트를 입력해주세요.')),
-                      );
-                      return;
-                    }
-                    
-                    final block = MapBlock(
-                      id: DateTime.now().millisecondsSinceEpoch.toString(),
-                      center: _selectedCenter!,
-                      radius: _currentRadius,
-                      type: selectedType,
-                      comment: comment,
-                      createdAt: DateTime.now(),
-                    );
-                    _savedBlocks.add(block);
-                    
-                    // ✅ 먼저 다이얼로그 닫기
-                    Navigator.pop(dialogContext);
 
-                    // ✅ 다이얼로그 닫힌 후 setState & 지도 업데이트
-                    setState(() {
-                      isRegistrationMode = false;
-                      _clearDrawing();
-                    });
-                    _addBlockOverlay(block);
-
-                    // ✅ pop 이후에도 미리 캡처한 messenger로 안전하게 SnackBar 표시
-                    scaffoldMessenger.showSnackBar(
-                      const SnackBar(content: Text('정보가 등록되었습니다.')),
-                    );
-                  },
-                  child: const Text('저장'),
-                ),
-=======
->>>>>>> 20076dbd0a1e24d981e4bf4167b2cd71d58d2666
               ],
             ),
             actions: [

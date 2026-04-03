@@ -232,9 +232,20 @@ class ApiService {
     }
   }
 
-  /// 1-4. 프로필 수정 (닉네임)
-  Future<Map<String, dynamic>> updateProfile({required String nickname}) async {
-    final res = await _patch('/api/v1/users/me', body: {'nickname': nickname});
+  /// 1-4. 프로필 수정 (닉네임, 아바타 이미지 경로)
+  Future<Map<String, dynamic>> updateProfile({
+    required String nickname,
+    String? avatarPath,
+  }) async {
+    // 아바타 이미지가 있으면 먼저 업로드
+    String? avatarUrl;
+    if (avatarPath != null && avatarPath.isNotEmpty) {
+      final urls = await uploadMedia([avatarPath]);
+      if (urls.isNotEmpty) avatarUrl = urls.first;
+    }
+    final body = <String, dynamic>{'nickname': nickname};
+    if (avatarUrl != null) body['avatarUrl'] = avatarUrl;
+    final res = await _patch('/api/v1/users/me', body: body);
     return res['data'] as Map<String, dynamic>? ?? {};
   }
 
@@ -269,6 +280,7 @@ class ApiService {
     required String content,
     required String category,
     String? locationKeyword,
+    String? country,
     double? latitude,
     double? longitude,
     List<String>? mediaUrls,
@@ -279,13 +291,14 @@ class ApiService {
       'category': category,
       if (locationKeyword != null && locationKeyword.isNotEmpty)
         'locationKeyword': locationKeyword,
+      if (country != null && country.isNotEmpty) 'country': country,
       if (latitude != null) 'latitude': latitude,
       if (longitude != null) 'longitude': longitude,
       if (mediaUrls != null && mediaUrls.isNotEmpty) 'mediaUrls': mediaUrls,
     };
     debugPrint('[createQuestion] 요청 body: $body');
     final res = await _post('/api/v1/questions', body: body);
-    debugPrint('[createQuestion] 응답: ${res}');
+    debugPrint('[createQuestion] 응답: $res');
     final data = res['data'];
     if (data is Map) {
       return data['questionId']?.toString() ?? data['id']?.toString();
@@ -455,13 +468,22 @@ class ApiService {
   }
 
   /// 폴더 생성 — SaveFolder 반환
-  Future<SaveFolder> createFolder(String name) async {
-    final res = await _post('/api/v1/folders', body: {'name': name});
+  Future<SaveFolder> createFolder(String name, {String? imagePath}) async {
+    // 이미지가 있으면 먼저 업로드
+    String? thumbnailUrl;
+    if (imagePath != null && imagePath.isNotEmpty) {
+      final urls = await uploadMedia([imagePath]);
+      if (urls.isNotEmpty) thumbnailUrl = urls.first;
+    }
+    final body = <String, dynamic>{'name': name};
+    if (thumbnailUrl != null) body['thumbnailUrl'] = thumbnailUrl;
+    final res = await _post('/api/v1/folders', body: body);
     final data = res['data'] as Map<String, dynamic>? ?? {};
     return SaveFolder(
       id: data['folderId']?.toString() ?? data['id']?.toString() ?? '',
       name: name,
       postCount: 0,
+      thumbnailUrl: thumbnailUrl,
     );
   }
 
@@ -520,5 +542,37 @@ class ApiService {
         .map<FolderPin>(
             (e) => FolderPin.fromJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // 6. 지도 블록 등록 (Map Blocks)
+  // ─────────────────────────────────────────────────────────────
+
+  /// 지도 구역(블록) 등록 — MapBlock 모델을 서버에 전송
+  Future<void> postBlock(MapBlock block) async {
+    final body = <String, dynamic>{
+      'latitude': block.center.latitude,
+      'longitude': block.center.longitude,
+      'radius': block.radius,
+      'type': block.type.name.toUpperCase(),
+      'comment': block.comment,
+    };
+    await _post('/api/v1/blocks', body: body);
+  }
+
+  /// 지도 구역(블록) 삭제
+  Future<void> deleteBlock(String blockId) async {
+    await _delete('/api/v1/blocks/$blockId');
+  }
+
+  /// 지도 구역(블록) 투표 — 유지(keep=true) 또는 삭제(keep=false) 투표
+  /// Returns: 업데이트된 MapBlock
+  Future<MapBlock> voteBlock(String blockId, bool isKeep) async {
+    final res = await _post(
+      '/api/v1/blocks/$blockId/vote',
+      body: {'isKeep': isKeep},
+    );
+    final data = res['data'] as Map<String, dynamic>? ?? {};
+    return MapBlock.fromJson(data);
   }
 }

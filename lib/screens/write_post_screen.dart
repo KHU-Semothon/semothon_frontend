@@ -6,6 +6,7 @@ import '../models/community_post.dart';
 import '../services/api_service.dart';
 import 'location_picker_screen.dart';
 import 'sign_in_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // ──────────────────────────────────────────────
 // 글쓰기 화면
