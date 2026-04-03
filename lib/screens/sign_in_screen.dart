@@ -2,15 +2,71 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'main_scaffold.dart';
 import 'sign_up_screen.dart';
-import '../widgets/social_login_button.dart'; // 기존의 소셜 로그인 버튼 재사용
+import '../widgets/social_login_button.dart';
+import '../services/api_service.dart';
 
-class SignInScreen extends StatelessWidget {
+class SignInScreen extends StatefulWidget {
   const SignInScreen({super.key});
+
+  @override
+  State<SignInScreen> createState() => _SignInScreenState();
+}
+
+class _SignInScreenState extends State<SignInScreen> {
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _apiService = ApiService();
+  bool _isLoading = false;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _login() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text.trim();
+
+    if (email.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('이메일과 비밀번호를 입력해주세요.')),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      // 1-2. 로그인 API 호출 → { accessToken, userId, nickname } 반환
+      final data = await _apiService.login(email: email, password: password);
+
+      final accessToken = data['accessToken'] as String?;
+      if (accessToken == null) throw ApiException(message: '토큰을 받아오지 못했습니다.');
+
+      // 받은 토큰을 기기에 저장
+      await _apiService.saveToken(accessToken);
+
+      if (!mounted) return;
+      // 메인 화면으로 이동
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const MainScaffold()),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // 이미지의 배경색에 가까운 부드러운 민트색/하늘색
       body: Container(
         width: double.infinity,
         decoration: const BoxDecoration(
@@ -26,9 +82,11 @@ class SignInScreen extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Spacer(flex: 2), // 위쪽 여백
+                const Spacer(flex: 2),
                 // 이메일 입력 필드
                 TextField(
+                  controller: _emailController,
+                  keyboardType: TextInputType.emailAddress,
                   decoration: InputDecoration(
                     hintText: 'email@domain.com',
                     hintStyle: const TextStyle(color: Colors.grey),
@@ -44,6 +102,7 @@ class SignInScreen extends StatelessWidget {
                 const SizedBox(height: 12),
                 // 패스워드 입력 필드
                 TextField(
+                  controller: _passwordController,
                   obscureText: true,
                   decoration: InputDecoration(
                     hintText: 'password',
@@ -69,28 +128,32 @@ class SignInScreen extends StatelessWidget {
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    onPressed: () {
-                      Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(builder: (_) => const MainScaffold()),
-                      );
-                    },
-                    child: const Text(
-                      '로그인',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                    onPressed: _isLoading ? null : _login,
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2.5,
+                            ),
+                          )
+                        : const Text(
+                            '로그인',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                   ),
                 ),
                 const SizedBox(height: 24),
-                // 구분선은 없고 바로 소셜 로그인
                 SocialLoginButton(
                   text: 'Google 계정으로 계속하기',
                   icon: Icons.g_mobiledata_rounded,
                   onPressed: () {
+                    // TODO: Google 소셜 로그인 구현
                     Navigator.pushReplacement(
                       context,
                       MaterialPageRoute(builder: (_) => const MainScaffold()),
@@ -102,6 +165,7 @@ class SignInScreen extends StatelessWidget {
                   text: 'Apple 계정으로 계속하기',
                   icon: Icons.apple,
                   onPressed: () {
+                    // TODO: Apple 소셜 로그인 구현
                     Navigator.pushReplacement(
                       context,
                       MaterialPageRoute(builder: (_) => const MainScaffold()),
@@ -109,7 +173,6 @@ class SignInScreen extends StatelessWidget {
                   },
                 ),
                 const SizedBox(height: 16),
-                // 계정 만들기 링크
                 RichText(
                   text: TextSpan(
                     text: '계정이 없으신가요? ',
@@ -121,18 +184,18 @@ class SignInScreen extends StatelessWidget {
                           color: Colors.black87,
                           fontWeight: FontWeight.bold,
                         ),
-                        recognizer: TapGestureRecognizer()..onTap = () {
-                          // 계정 만들기 화면(SignUpScreen)으로 이동
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (_) => const SignUpScreen()),
-                          );
-                        },
+                        recognizer: TapGestureRecognizer()
+                          ..onTap = () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => const SignUpScreen()),
+                            );
+                          },
                       ),
                     ],
                   ),
                 ),
-                const Spacer(flex: 3), // 아래쪽 여백
+                const Spacer(flex: 3),
               ],
             ),
           ),

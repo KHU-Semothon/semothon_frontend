@@ -39,26 +39,26 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
     }
   }
 
-  void _updateDrawingOverlay() {
+  Future<void> _updateDrawingOverlay() async {
     if (_mapController == null || _selectedCenter == null) return;
     
-    // 기존 임시 오버레이 제거
+    // 기존 임시 오버레이 먼저 완전히 제거 (await로 순서 보장)
     if (_centerMarker != null) {
-      _mapController!.deleteOverlay(_centerMarker!.info);
+      await _mapController!.deleteOverlay(_centerMarker!.info);
       _centerMarker = null;
     }
     if (_currentDrawingCircle != null) {
-      _mapController!.deleteOverlay(_currentDrawingCircle!.info);
+      await _mapController!.deleteOverlay(_currentDrawingCircle!.info);
       _currentDrawingCircle = null;
     }
 
-    // 중심점 마커
+    // 중심점 마커 추가
     _centerMarker = NMarker(
       id: "temp_center_marker", 
       position: _selectedCenter!,
       size: const Size(20, 28),
     );
-    _mapController!.addOverlay(_centerMarker!);
+    await _mapController!.addOverlay(_centerMarker!);
 
     // 반경 원형 표시
     _currentDrawingCircle = NCircleOverlay(
@@ -69,11 +69,11 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
       outlineColor: Colors.black,
       outlineWidth: 3,
     );
-    _mapController!.addOverlay(_currentDrawingCircle!);
+    await _mapController!.addOverlay(_currentDrawingCircle!);
   }
 
   // 새로 등록된 1개의 블록만 즉시 맵에 추가 (불필요한 전체 삭제 방지)
-  void _addBlockOverlay(MapBlock block) {
+  Future<void> _addBlockOverlay(MapBlock block) async {
     if (_mapController == null) return;
     
     final bgColor = block.type == BlockType.hazard 
@@ -97,7 +97,7 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
     });
     
     try {
-      _mapController!.addOverlay(circle);
+      await _mapController!.addOverlay(circle);
     } catch (e) {
       debugPrint('단일 오버레이 추가 에러: $e');
     }
@@ -132,12 +132,15 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
   void _showRegistrationDialog() {
     BlockType selectedType = BlockType.hazard;
     String comment = '';
+
+    // ✅ 다이얼로그 context와 분리: pop 이후에도 안전하게 사용하기 위해 미리 캡처
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
     
     showDialog(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         return StatefulBuilder(
-          builder: (context, setDialogState) {
+          builder: (dialogContext, setDialogState) {
             return AlertDialog(
               title: const Text('정보 등록'),
               content: Column(
@@ -175,14 +178,17 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.pop(context),
+                  onPressed: () => Navigator.pop(dialogContext),
                   child: const Text('취소'),
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.black, foregroundColor: Colors.white),
                   onPressed: () {
                     if (comment.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('코멘트를 입력해주세요.')));
+                      // 다이얼로그 안에서는 dialogContext 사용
+                      scaffoldMessenger.showSnackBar(
+                        const SnackBar(content: Text('코멘트를 입력해주세요.')),
+                      );
                       return;
                     }
                     
@@ -196,16 +202,20 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                     );
                     _savedBlocks.add(block);
                     
-                    Navigator.pop(context);
+                    // ✅ 먼저 다이얼로그 닫기
+                    Navigator.pop(dialogContext);
+
+                    // ✅ 다이얼로그 닫힌 후 setState & 지도 업데이트
                     setState(() {
                       isRegistrationMode = false;
                       _clearDrawing();
                     });
-                    
-                    // 불필요한 전체 새로고침 대신, '방금 생성한 블록' 1개만 지도에 즉각 던져서 충돌 원천 차단
                     _addBlockOverlay(block);
-                    
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('정보가 등록되었습니다.')));
+
+                    // ✅ pop 이후에도 미리 캡처한 messenger로 안전하게 SnackBar 표시
+                    scaffoldMessenger.showSnackBar(
+                      const SnackBar(content: Text('정보가 등록되었습니다.')),
+                    );
                   },
                   child: const Text('저장'),
                 ),
