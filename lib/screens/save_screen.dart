@@ -726,7 +726,7 @@ class _FolderDetailScreenState extends State<_FolderDetailScreen> {
                     Navigator.pop(context, true); // 삭제됨 신호
                   } catch (e) {
                     if (!mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('삭제 실패: $e')));
+                    debugPrint('삭제 실패: $e');
                   }
                 }
               }

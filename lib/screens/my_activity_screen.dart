@@ -53,7 +53,7 @@ class _MyActivityScreenState extends State<MyActivityScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('정보를 불러오지 못했습니다: $e')));
+        debugPrint('정보를 불러오지 못했습니다: $e');
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -119,7 +119,7 @@ class _MyActivityScreenState extends State<MyActivityScreen> {
           }
         } catch (e) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('게시글 정보를 불러오지 못했습니다: $e')));
+            debugPrint('게시글 정보를 불러오지 못했습니다: $e');
           }
         } finally {
           if (mounted) setState(() => _isLoading = false);

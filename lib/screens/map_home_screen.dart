@@ -151,11 +151,7 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
         );
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('게시물 로드 실패: $e')),
-        );
-      }
+      debugPrint('게시물 로드 실패: $e');
     }
   }
 
@@ -424,16 +420,21 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
         debugPrint('[MapHome] 서버 블록: ${serverBlocks.length}개, 로컬전용: ${localOnlyBlocks.length}개');
 
         // 기존 오버레이 전부 삭제 후 새로운 범위 결과로 오버레이 재구성
-        _clearOverlays(_savedBlocks);
         setState(() => _savedBlocks
           ..clear()
           ..addAll(mergedBlocks));
-        for (final b in _savedBlocks) {
-          _addBlockOverlay(b);
-        }
+        _applyFilterToOverlays();
       } catch (e) {
         debugPrint('구역 조회 오류: $e');
-        // 서버 조회 실패해도 로컬 블록은 유지 (아무것도 하지 않음)
+        // 서버 조회 실패해도 시드 데이터와 로컬 블록 노출 유지
+        if (mounted) {
+          final localOnlyBlocks = _savedBlocks.where((b) => !b.id.startsWith('seed_')).toList();
+          final mergedBlocks = [...localOnlyBlocks, ..._seedBlocks];
+          setState(() => _savedBlocks
+            ..clear()
+            ..addAll(mergedBlocks));
+          _applyFilterToOverlays();
+        }
       } finally {
         if (mounted) {
           setState(() {
@@ -501,7 +502,7 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
         );
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('에러: $e')));
+      debugPrint('삭제 에러: $e');
     }
   }
 
@@ -520,7 +521,7 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
         );
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('투표 에러: $e')));
+      debugPrint('투표 에러: $e');
     }
   }
 
@@ -699,19 +700,10 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
           }
         }
       } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('검색 오류: ${response.statusCode}')),
-          );
-        }
+        debugPrint('검색 오류: ${response.statusCode}');
       }
     } catch (e) {
       debugPrint('검색 오류: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('네트워크 오류가 발생했습니다.')),
-        );
-      }
     }
   }
 
@@ -1612,16 +1604,6 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
       debugPrint('[MapHome] 블록 서버 저장 완료: ${blockToSave.id}');
     } catch (e) {
       debugPrint('[MapHome] 블록 서버 저장 실패 (로컬엔 유지됨): $e');
-      // 서버 실패 시 조용히 알림만 (UI는 이미 등록된 상태 유지)
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('서버 저장에 실패했습니다. 앱 재시작 시 사라질 수 있습니다.\n원인: $e'),
-            duration: const Duration(seconds: 5),
-            backgroundColor: Colors.orange[700],
-          ),
-        );
-      }
     }
   }
 

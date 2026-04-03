@@ -151,7 +151,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     } catch (e) {
       if (mounted) {
         setState(() { _isLiked = orig; _likeCount = origCount; });
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('좋아요 실패: $e')));
+        debugPrint('좋아요 실패: $e');
       }
     }
   }
@@ -239,13 +239,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
           } catch (e) {
             debugPrint('[handleSave] 서버 저장 실패: $e');
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('서버 동기화 실패: $e'),
-                  backgroundColor: Colors.orange[700],
-                  duration: const Duration(seconds: 5),
-                ),
-              );
+              debugPrint('서버 동기화 실패: $e');
             }
           }
         },
@@ -267,13 +261,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             } catch (e) {
               debugPrint('[handleSave] 새 폴더 서버 저장 실패: $e');
               if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('서버 동기화 실패: $e'),
-                    backgroundColor: Colors.orange[700],
-                    duration: const Duration(seconds: 5),
-                  ),
-                );
+                debugPrint('서버 동기화 실패: $e');
               }
             }
           }
@@ -327,13 +315,9 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
       }
     } catch (e) {
       debugPrint('[submitComment] 실패: $e');
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('댓글 작성 실패: $e'),
-          duration: const Duration(seconds: 5),
-          action: SnackBarAction(label: '확인', textColor: Colors.white, onPressed: () {}),
-        ),
-      );
+      if (mounted) {
+        debugPrint('댓글 작성 실패: $e');
+      }
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
