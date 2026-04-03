@@ -18,7 +18,7 @@ class SaveFolder {
   // ── 서버 → 앱 (JSON 역직렬화) ──────────────────────────
   factory SaveFolder.fromJson(Map<String, dynamic> json) {
     return SaveFolder(
-      id:           json['id']?.toString() ?? '',
+      id:           json['folderId']?.toString() ?? json['id']?.toString() ?? '',
       name:         json['name'] as String? ?? '',
       postCount:    (json['postCount'] as num?)?.toInt() ?? 0,
       thumbnailUrl: json['thumbnailUrl'] as String?,

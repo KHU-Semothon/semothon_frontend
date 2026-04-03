@@ -122,10 +122,18 @@ class _WritePostScreenState extends State<WritePostScreen> {
       );
 
       // 위치 정보가 있으면 SharedPreferences에 저장 (서버 목록 API가 반환하지 않으므로)
-      if (newId != null && locationToSend != null && locationToSend.isNotEmpty) {
+      if (locationToSend != null && locationToSend.isNotEmpty) {
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('location_$newId', locationToSend);
-        debugPrint('[WritePost] 위치 로컸 저장: location_$newId = $locationToSend');
+        if (newId != null) {
+          // 서버에서 ID를 받은 경우: 정식 키로 저장
+          await prefs.setString('location_$newId', locationToSend);
+          debugPrint('[WritePost] 위치 저장: location_$newId = $locationToSend');
+        } else {
+          // 서버가 ID를 반환하지 않은 경우: 제목 기반 임시 키로 저장 (목록 조회 시 제목 매칭)
+          final titleKey = _titleController.text.trim().hashCode.toString();
+          await prefs.setString('location_title_$titleKey', locationToSend);
+          debugPrint('[WritePost] 위치 임시 저장 (ID 없음): location_title_$titleKey = $locationToSend');
+        }
       }
 
       if (mounted) {

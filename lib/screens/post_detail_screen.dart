@@ -188,9 +188,17 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     final loggedIn = await _api.isLoggedIn();
     if (!mounted) return;
     if (!loggedIn) { Navigator.push(context, MaterialPageRoute(builder: (_) => const SignInScreen())); return; }
+
+    // 폴더 목록 로드
     List<SaveFolder> folders = [];
-    try { folders = await _api.getFolders(); } catch (_) {}
+    try {
+      folders = await _api.getFolders();
+    } catch (e) {
+      debugPrint('[handleSave] 폴더 로드 실패: $e');
+      // 서버 실패시 빈 목록으로 진행 (새 폴더 만들기는 가능)
+    }
     if (!mounted) return;
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
@@ -200,25 +208,71 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
         folders: folders,
         onFolderSelected: (folder) async {
           Navigator.pop(ctx);
+
+          final folderId = folder.id;
+          final postId   = widget.post.id;
+          debugPrint('[handleSave] folderId="$folderId", postId="$postId"');
+
+          // folderId/postId 비어있으면 에러 표시
+          if (folderId.isEmpty || postId.isEmpty) {
+            if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('저장 실패: ID 누락 (folderId=${folderId.isEmpty ? "없음" : folderId}, postId=${postId.isEmpty ? "없음" : postId})'),
+                backgroundColor: Colors.red[700],
+              ),
+            );
+            return;
+          }
+
+          // UI 선반영
+          setState(() => _isBookmarked = true);
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('"${folder.name}"에 저장되었습니다.')),
+          );
+
+          // 서버 비동기 저장
           try {
-            await _api.addPostToFolder(folder.id, widget.post.id);
-            setState(() => _isBookmarked = true);
-            if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('"${folder.name}"에 저장되었습니다.')));
+            await _api.addPostToFolder(folderId, postId);
+            debugPrint('[handleSave] 서버 저장 완료');
           } catch (e) {
-            if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('저장 실패: $e')));
+            debugPrint('[handleSave] 서버 저장 실패: $e');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('서버 동기화 실패: $e'),
+                  backgroundColor: Colors.orange[700],
+                  duration: const Duration(seconds: 5),
+                ),
+              );
+            }
           }
         },
         onCreateFolder: () async {
           Navigator.pop(ctx);
           final name = await _showCreateFolderDialog();
           if (name != null && name.isNotEmpty && mounted) {
+            // UI 선반영
+            setState(() => _isBookmarked = true);
+            if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('"$name" 폴더에 저장되었습니다.')),
+            );
+            // 서버 비동기 저장
             try {
               final newFolder = await _api.createFolder(name);
+              debugPrint('[handleSave] 새 폴더 생성: id=${newFolder.id}');
               await _api.addPostToFolder(newFolder.id, widget.post.id);
-              setState(() => _isBookmarked = true);
-              if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('"$name" 폴더에 저장되었습니다.')));
+              debugPrint('[handleSave] 새 폴더에 서버 저장 완료');
             } catch (e) {
-              if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('저장 실패: $e')));
+              debugPrint('[handleSave] 새 폴더 서버 저장 실패: $e');
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('서버 동기화 실패: $e'),
+                    backgroundColor: Colors.orange[700],
+                    duration: const Duration(seconds: 5),
+                  ),
+                );
+              }
             }
           }
         },

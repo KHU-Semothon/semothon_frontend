@@ -89,23 +89,44 @@ class MapBlock {
     'isPermanent': isPermanent,
   };
 
-  /// 서버 응답 JSON 역직렬화
-  factory MapBlock.fromJson(Map<String, dynamic> json) => MapBlock(
-    id: json['id'].toString(),
-    center: NLatLng(
-      (json['latitude'] as num).toDouble(),
-      (json['longitude'] as num).toDouble(),
-    ),
-    radius: (json['radius'] as num).toDouble(),
-    type: BlockType.values.firstWhere(
-      (e) => e.name == json['type'] || e.toString().split('.').last == json['type'],
-      orElse: () => BlockType.hazard,
-    ),
-    comment: json['comment'] as String,
-    createdAt: DateTime.parse(json['createdAt'] as String),
-    keepVotes: json['keepVotes'] ?? 0,
-    removeVotes: json['removeVotes'] ?? 0,
-    isPermanent: json['isPermanent'] ?? false,
-  );
+  /// 서버 응답 JSON 역직렬화 (명세서 3-2: GET /api/v1/blocks 응답 기준)
+  factory MapBlock.fromJson(Map<String, dynamic> json) {
+    // type 필드 파싱 — 명세서: 소문자 "hazard", "cultural", "restaurant", "cafe", "tip", "other"
+    BlockType resolveType() {
+      final raw = (json['type'] as String? ?? '').toLowerCase();
+      // 명세서 소문자 형식
+      switch (raw) {
+        case 'hazard':     return BlockType.hazard;
+        case 'cultural':   return BlockType.cultural;
+        case 'restaurant': return BlockType.restaurant;
+        case 'cafe':       return BlockType.cafe;
+        case 'tip':        return BlockType.tip;
+        case 'other':      return BlockType.other;
+        // 혹시 대문자로 오는 경우 호환
+        default:
+          return BlockType.values.firstWhere(
+            (e) => e.name == raw,
+            orElse: () => BlockType.other,
+          );
+      }
+    }
+
+    return MapBlock(
+      id:      (json['id'])?.toString() ?? '',
+      center: NLatLng(
+        (json['latitude']  as num).toDouble(),
+        (json['longitude'] as num).toDouble(),
+      ),
+      radius:    (json['radius']  as num?)?.toDouble() ?? 50.0,
+      type:      resolveType(),
+      comment:   json['comment']  as String? ?? '',
+      createdAt: json['createdAt'] != null
+          ? DateTime.tryParse(json['createdAt'] as String) ?? DateTime.now()
+          : DateTime.now(),
+      keepVotes:   (json['keepVotes']   as num?)?.toInt() ?? 0,
+      removeVotes: (json['removeVotes'] as num?)?.toInt() ?? 0,
+      isPermanent: json['isPermanent']  as bool? ?? false,
+    );
+  }
 }
 

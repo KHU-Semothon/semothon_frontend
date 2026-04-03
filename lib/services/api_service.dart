@@ -165,7 +165,13 @@ class ApiService {
   List<dynamic> _extractList(dynamic data) {
     if (data is List) return data;
     if (data is Map) {
-      final inner = data['content'] ?? data['questions'] ?? data['items'] ?? data['answers'] ?? [];
+      // 명세서 2-2: data.content 배열 (페이징)
+      final inner = data['content']
+          ?? data['questions']
+          ?? data['items']
+          ?? data['answers']
+          ?? data['pins']
+          ?? [];
       if (inner is List) return inner;
     }
     return [];
@@ -433,7 +439,7 @@ class ApiService {
     return res['data'] as List? ?? [];
   }
 
-  // 지도 구역(MapBlock) 관련
+  // 지도 구역(MapBlock) 조회 — 명세서 3-2: GET /api/v1/blocks (지도 카메라 이동 시 렌더링)
   Future<List<MapBlock>> getBlocksInBounds({
     required double minLat,
     required double maxLat,
@@ -441,7 +447,8 @@ class ApiService {
     required double maxLng,
   }) async {
     final res = await _get(
-        '/api/v1/blocks?minLat=$minLat&maxLat=$maxLat&minLng=$minLng&maxLng=$maxLng');
+        '/api/v1/blocks?minLat=$minLat&maxLat=$maxLat&minLng=$minLng&maxLng=$maxLng',
+        auth: false);
     return _extractList(res['data'])
         .map<MapBlock>((e) => MapBlock.fromJson(e as Map<String, dynamic>))
         .toList();
@@ -492,9 +499,9 @@ class ApiService {
     await _post('/api/v1/folders/$folderId/questions/$postId');
   }
 
-  /// 폴더에서 게시물 제거
+  /// 폴더에서 게시물 제거 (4-3과 대칭)
   Future<void> removePostFromFolder(String folderId, String postId) async {
-    await _delete('/api/v1/folders/$folderId/posts/$postId');
+    await _delete('/api/v1/folders/$folderId/questions/$postId');
   }
 
   /// 폴더 이름 수정
@@ -527,9 +534,9 @@ class ApiService {
   // 5. 폴더 핀 (API 명세 4-5)
   // ─────────────────────────────────────────────────────────────
 
-  /// 폴더 내 화면 영역 핀 목록 조회 (Bounding Box)
+  /// 폴더 내 화면 영역 핀 목록 조회 (Bounding Box) — 명세서 4-5
   Future<List<FolderPin>> getFolderPinsInBounds({
-    required int folderId,
+    required String folderId,   // String으로 실제 사용
     required double minLat,
     required double maxLat,
     required double minLng,
@@ -545,28 +552,53 @@ class ApiService {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // 6. 지도 블록 등록 (Map Blocks)
+  // 6. 지도 핀 등록/삭제/투표 (API 명세서 3-1, 3-2 기준)
   // ─────────────────────────────────────────────────────────────
 
-  /// 지도 구역(블록) 등록 — MapBlock 모델을 서버에 전송
+  /// BlockType → 서버 pinType 문자열 변환 (명세서: DANGER, RESTAURANT, CAUTION, CAFE, ETC)
+  static String _toPinType(BlockType type) {
+    switch (type) {
+      case BlockType.hazard:     return 'DANGER';
+      case BlockType.cultural:   return 'CAUTION';
+      case BlockType.restaurant: return 'RESTAURANT';
+      case BlockType.cafe:       return 'CAFE';
+      case BlockType.tip:        return 'ETC';
+      case BlockType.other:      return 'ETC';
+    }
+  }
+
+  /// 서버 pinType → BlockType 변환
+  static BlockType _fromPinType(String? pinType) {
+    switch ((pinType ?? '').toUpperCase()) {
+      case 'DANGER':     return BlockType.hazard;
+      case 'CAUTION':    return BlockType.cultural;
+      case 'RESTAURANT': return BlockType.restaurant;
+      case 'CAFE':       return BlockType.cafe;
+      case 'ETC':        return BlockType.tip;
+      default:           return BlockType.other;
+    }
+  }
+
+  /// 지도 구역 등록 (명세서 3-1: POST /api/v1/blocks, 구역 설정 시 호출)
   Future<void> postBlock(MapBlock block) async {
     final body = <String, dynamic>{
-      'latitude': block.center.latitude,
+      'id':        block.id,
+      'latitude':  block.center.latitude,
       'longitude': block.center.longitude,
-      'radius': block.radius,
-      'type': block.type.name.toUpperCase(),
-      'comment': block.comment,
+      'radius':    block.radius,          // double, 단위: m
+      'type':      block.type.name,       // 소문자 그대로: hazard, cultural, restaurant, cafe, tip, other
+      'comment':   block.comment,
+      'createdAt': block.createdAt.toIso8601String(),
     };
     await _post('/api/v1/blocks', body: body);
   }
 
-  /// 지도 구역(블록) 삭제
+  /// 지도 구역 삭제
   Future<void> deleteBlock(String blockId) async {
     await _delete('/api/v1/blocks/$blockId');
   }
 
-  /// 지도 구역(블록) 투표 — 유지(keep=true) 또는 삭제(keep=false) 투표
-  /// Returns: 업데이트된 MapBlock
+  /// 지도 구역 투표 — 유지(keep=true) 또는 삭제(keep=false)
   Future<MapBlock> voteBlock(String blockId, bool isKeep) async {
     final res = await _post(
       '/api/v1/blocks/$blockId/vote',
@@ -576,3 +608,4 @@ class ApiService {
     return MapBlock.fromJson(data);
   }
 }
+

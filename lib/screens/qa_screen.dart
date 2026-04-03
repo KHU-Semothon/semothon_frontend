@@ -53,12 +53,33 @@ class _QaScreenState extends State<QaScreen> {
       final fetched = await _api.getQuestions(category: mappedCategory, size: 20);
       debugPrint('[QaScreen] 불러온 게시글 수: ${fetched.length}');
 
-      // SharedPreferences에 케시된 위치 정보 주입
+      // SharedPreferences에 캐시된 위치 정보 주입
       final prefs = await SharedPreferences.getInstance();
+
+      // [DEBUG] 저장된 location 키 전체 출력 (문제 진단용)
+      final allKeys = prefs.getKeys().where((k) => k.startsWith('location_')).toList();
+      debugPrint('[QaScreen] 저장된 위치 캐시 키 목록: $allKeys');
+      debugPrint('[QaScreen] 게시글 questionId 목록: ${fetched.map((p) => p.questionId).toList()}');
       final withLocation = fetched.map((post) {
-        final cached = prefs.getString('location_${post.questionId}');
-        if (cached != null && cached.isNotEmpty && (post.locationKeyword == null || post.locationKeyword!.isEmpty)) {
-          return post.copyWith(locationKeyword: cached);
+        // 이미 서버에서 locationKeyword를 받은 경우
+        if (post.locationKeyword != null && post.locationKeyword!.isNotEmpty) {
+          debugPrint('[QaScreen] 서버 위치: ${post.questionId} → ${post.locationKeyword}');
+          return post;
+        }
+        // questionId 기반 캐시 확인
+        final cachedById = prefs.getString('location_${post.questionId}');
+        if (cachedById != null && cachedById.isNotEmpty) {
+          debugPrint('[QaScreen] 캐시(ID) 위치: ${post.questionId} → $cachedById');
+          return post.copyWith(locationKeyword: cachedById);
+        }
+        // 제목 해시 기반 임시 캐시 확인 (newId 없이 저장된 경우)
+        final titleKey = post.title.hashCode.toString();
+        final cachedByTitle = prefs.getString('location_title_$titleKey');
+        if (cachedByTitle != null && cachedByTitle.isNotEmpty) {
+          debugPrint('[QaScreen] 캐시(제목) 위치: ${post.title} → $cachedByTitle');
+          // 정식 키로 이전 저장
+          prefs.setString('location_${post.questionId}', cachedByTitle);
+          return post.copyWith(locationKeyword: cachedByTitle);
         }
         return post;
       }).toList();

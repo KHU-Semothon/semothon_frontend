@@ -356,23 +356,32 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
       if (_mapController == null || !mounted) return;
       try {
         final bounds = await _mapController!.getContentBounds();
-        final blocks = await _api.getBlocksInBounds(
+        final serverBlocks = await _api.getBlocksInBounds(
           minLat: bounds.southWest.latitude,
           maxLat: bounds.northEast.latitude,
           minLng: bounds.southWest.longitude,
           maxLng: bounds.northEast.longitude,
         );
         if (!mounted) return;
+
+        // 서버 응답에 없는 로컬 등록 블록을 유지 (서버 저장 실패/지연 대비)
+        final serverIds = serverBlocks.map((b) => b.id).toSet();
+        final localOnlyBlocks = _savedBlocks.where((b) => !serverIds.contains(b.id)).toList();
+        final mergedBlocks = [...serverBlocks, ...localOnlyBlocks];
+
+        debugPrint('[MapHome] 서버 블록: ${serverBlocks.length}개, 로컬전용: ${localOnlyBlocks.length}개');
+
         // 기존 오버레이 전부 삭제 후 새로운 범위 결과로 오버레이 재구성
         _clearOverlays(_savedBlocks);
         setState(() => _savedBlocks
           ..clear()
-          ..addAll(blocks));
+          ..addAll(mergedBlocks));
         for (final b in _savedBlocks) {
           _addBlockOverlay(b);
         }
       } catch (e) {
         debugPrint('구역 조회 오류: $e');
+        // 서버 조회 실패해도 로컬 블록은 유지 (아무것도 하지 않음)
       } finally {
         if (mounted) {
           setState(() {
@@ -383,6 +392,7 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
       }
     });
   }
+
 
   /// 지도 오버레이 제거 헬퍼
   void _clearOverlays(List<MapBlock> blocks) {
@@ -1416,31 +1426,44 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
     
     setState(() => _isLoading = true);
     
-    try {
-      final isPin = _pendingType != BlockType.hazard && _pendingType != BlockType.cultural;
-      
-      final blockToSave = MapBlock(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        center: target,
-        radius: isPin ? 0.0 : _currentRadius,
-        type: _pendingType,
-        comment: _commentController.text,
-        createdAt: DateTime.now(),
-      );
+    final isPin = _pendingType != BlockType.hazard && _pendingType != BlockType.cultural;
+    
+    final blockToSave = MapBlock(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      center: target,
+      radius: isPin ? 0.0 : _currentRadius,
+      type: _pendingType,
+      comment: _commentController.text,
+      createdAt: DateTime.now(),
+    );
 
+    // 1. 로컬 UI에 즉시 추가 (서버 결과와 무관하게)
+    setState(() {
+      _savedBlocks.add(blockToSave);
+      _exitRegistration();
+    });
+    _applyFilterToOverlays();
+    if (mounted) setState(() => _isLoading = false);
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('성공적으로 등록되었습니다.')),
+    );
+
+    // 2. 서버에 비동기로 저장 (실패해도 UI는 유지)
+    try {
       await _api.postBlock(blockToSave);
-      
-      setState(() {
-        _savedBlocks.add(blockToSave);
-        _exitRegistration(); 
-      });
-      _applyFilterToOverlays();
-      
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('성공적으로 등록되었습니다.')));
+      debugPrint('[MapHome] 블록 서버 저장 완료: ${blockToSave.id}');
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('등록 실패: $e')));
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
+      debugPrint('[MapHome] 블록 서버 저장 실패 (로컬엔 유지됨): $e');
+      // 서버 실패 시 조용히 알림만 (UI는 이미 등록된 상태 유지)
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('서버 저장에 실패했습니다. 앱 재시작 시 사라질 수 있습니다. ($e)'),
+            duration: const Duration(seconds: 4),
+            backgroundColor: Colors.orange[700],
+          ),
+        );
+      }
     }
   }
 
