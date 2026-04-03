@@ -485,9 +485,14 @@ class ApiService {
     final body = <String, dynamic>{'name': name};
     if (thumbnailUrl != null) body['thumbnailUrl'] = thumbnailUrl;
     final res = await _post('/api/v1/folders', body: body);
+    debugPrint('[createFolder] 서버 응답 전체: $res');
     final data = res['data'] as Map<String, dynamic>? ?? {};
+    debugPrint('[createFolder] data 키 목록: ${data.keys.toList()}');
+    debugPrint('[createFolder] data 전체: $data');
+    final folderId = data['folderId']?.toString() ?? data['id']?.toString() ?? '';
+    debugPrint('[createFolder] 파싱된 folderId: "$folderId"');
     return SaveFolder(
-      id: data['folderId']?.toString() ?? data['id']?.toString() ?? '',
+      id: folderId,
       name: name,
       postCount: 0,
       thumbnailUrl: thumbnailUrl,
