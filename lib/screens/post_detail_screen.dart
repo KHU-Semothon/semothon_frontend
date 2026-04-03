@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../models/community_post.dart';
 import '../models/save_folder.dart';
 import '../services/api_service.dart';
+import '../services/user_profile_service.dart';
+import '../widgets/user_avatar.dart';
 import 'sign_in_screen.dart';
 
 // ── 댓글 모델 ───────────────────────────────────────────────────
@@ -401,10 +403,22 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                       // 작성자 정보
                       Row(
                         children: [
-                          const CircleAvatar(
-                            radius: 22,
-                            backgroundColor: Color(0xFFD0D0D0),
-                            child: Icon(Icons.person, color: Colors.white, size: 24),
+                          // 작성자 아바타 - 내가 쓴 글이면 전역 프로필 연동
+                          ListenableBuilder(
+                            listenable: UserProfileService(),
+                            builder: (context, _) {
+                              final svc = UserProfileService();
+                              final isMe = post.username == svc.nickname;
+                              if (isMe) {
+                                return const UserAvatar(radius: 22);
+                              } else {
+                                return const CircleAvatar(
+                                  radius: 22,
+                                  backgroundColor: Color(0xFFD0D0D0),
+                                  backgroundImage: AssetImage('assets/images/default_profile.png'),
+                                );
+                              }
+                            },
                           ),
                           const SizedBox(width: 12),
                           Column(
@@ -580,11 +594,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                 MediaQuery.of(context).viewInsets.bottom > 0 ? 8 : 20),
             child: Row(
               children: [
-                const CircleAvatar(
-                  radius: 16,
-                  backgroundColor: Color(0xFFD0D0D0),
-                  child: Icon(Icons.person, color: Colors.white, size: 18),
-                ),
+                // 내 아바타 - 전역 프로필 이미지 사용
+                const UserAvatar(radius: 16),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Container(
@@ -670,11 +681,22 @@ class _CommentItem extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 아바타
-              const CircleAvatar(
-                radius: 18,
-                backgroundColor: Color(0xFFD0D0D0),
-                child: Icon(Icons.person, color: Colors.white, size: 18),
+              // 댓글 아바타 - 내 댓글은 전역 프로필, 타인 댓글은 기본 이미지
+              ListenableBuilder(
+                listenable: UserProfileService(),
+                builder: (context, _) {
+                  final svc = UserProfileService();
+                  final isMe = comment.authorNickname == svc.nickname;
+                  if (isMe) {
+                    return const UserAvatar(radius: 18);
+                  } else {
+                    return UserAvatar.buildAvatar(
+                      avatarFile: null,
+                      useDefault: true,
+                      radius: 18,
+                    );
+                  }
+                },
               ),
               const SizedBox(width: 10),
               // 본문
@@ -745,7 +767,7 @@ class _CommentItem extends StatelessWidget {
                           const Text('└', style: TextStyle(fontSize: 13, color: Colors.grey)),
                           const SizedBox(width: 8),
                           const CircleAvatar(radius: 8, backgroundColor: Color(0xFFD0D0D0),
-                              child: Icon(Icons.person, size: 8, color: Colors.white)),
+                              backgroundImage: AssetImage('assets/images/default_profile.png')),
                           const SizedBox(width: 6),
                           Text('답글 ${comment.replyCount}개',
                               style: const TextStyle(fontSize: 12, color: Colors.grey)),

@@ -305,7 +305,7 @@ class _SaveScreenState extends State<SaveScreen> {
         elevation: 0,
         centerTitle: true,
         title: const Text(
-          '나의 취향',
+          '아카이브',
           style: TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.w700,
@@ -437,14 +437,13 @@ class _AddFolderCard extends StatelessWidget {
       child: Container(
         height: 100,
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.grey[200]!),
+          color: const Color(0xFFFFF8E1), // 연한 크림색
+          borderRadius: BorderRadius.circular(18),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
+              color: Colors.black.withValues(alpha: 0.08),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
             ),
           ],
         ),
@@ -452,15 +451,15 @@ class _AddFolderCard extends StatelessWidget {
           children: [
             Container(
               width: 100,
-              decoration: BoxDecoration(
-                color: Colors.grey[200],
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(14),
-                  bottomLeft: Radius.circular(14),
+              decoration: const BoxDecoration(
+                color: Color(0xFFFDE28A), // 진한 노란색
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(18),
+                  bottomLeft: Radius.circular(18),
                 ),
               ),
               child: const Center(
-                child: Icon(Icons.add, color: Colors.grey, size: 32),
+                child: Icon(Icons.add, color: Colors.black54, size: 36),
               ),
             ),
             const SizedBox(width: 16),
@@ -472,16 +471,21 @@ class _AddFolderCard extends StatelessWidget {
                   '새로 추가하기',
                   style: TextStyle(
                     fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   '나만의 여행을 모아보세요',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                  style: TextStyle(fontSize: 12, color: Colors.black45),
                 ),
               ],
+            ),
+            const Spacer(),
+            const Padding(
+              padding: EdgeInsets.only(right: 8),
+              child: Icon(Icons.more_vert, color: Colors.black26),
             ),
           ],
         ),
@@ -515,16 +519,16 @@ class _FolderCard extends StatelessWidget {
       child: Container(
         height: 100,
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
+          color: const Color(0xFFFFF8E1), // 연한 크림색
+          borderRadius: BorderRadius.circular(18),
           border: isEditMode
               ? Border.all(color: Colors.blue[300]!, width: 1.5)
-              : Border.all(color: Colors.grey[200]!),
+              : null,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
+              color: Colors.black.withValues(alpha: 0.08),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
             ),
           ],
         ),
@@ -533,10 +537,10 @@ class _FolderCard extends StatelessWidget {
             Container(
               width: 100,
               decoration: BoxDecoration(
-                color: Colors.grey[200],
+                color: const Color(0xFFFDE28A), // 사진이 없을 때 진한 노란색
                 borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(14),
-                  bottomLeft: Radius.circular(14),
+                  topLeft: Radius.circular(18),
+                  bottomLeft: Radius.circular(18),
                 ),
                 image: folder.thumbnailUrl != null
                     ? DecorationImage(
@@ -545,9 +549,6 @@ class _FolderCard extends StatelessWidget {
                       )
                     : null,
               ),
-              child: folder.thumbnailUrl == null
-                  ? CustomPaint(painter: _CheckeredPainter())
-                  : null,
             ),
             const SizedBox(width: 16),
             Expanded(
@@ -559,14 +560,14 @@ class _FolderCard extends StatelessWidget {
                     folder.name,
                     style: const TextStyle(
                       fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.black,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
                     ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     '${folder.postCount}',
-                    style: TextStyle(fontSize: 13, color: Colors.grey[500]),
+                    style: TextStyle(fontSize: 13, color: Colors.black45),
                   ),
                 ],
               ),
@@ -626,31 +627,6 @@ class _FolderCard extends StatelessWidget {
       ),
     );
   }
-}
-
-// ──────────────────────────────────────────────
-// 체크무늬 패턴 (썸네일 없을 때)
-// ──────────────────────────────────────────────
-class _CheckeredPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    const cellSize = 10.0;
-    final paint1 = Paint()..color = const Color(0xFFD0D0D0);
-    final paint2 = Paint()..color = const Color(0xFFEAEAEA);
-    for (double y = 0; y < size.height; y += cellSize) {
-      for (double x = 0; x < size.width; x += cellSize) {
-        final isEven =
-            ((x / cellSize).toInt() + (y / cellSize).toInt()) % 2 == 0;
-        canvas.drawRect(
-          Rect.fromLTWH(x, y, cellSize, cellSize),
-          isEven ? paint1 : paint2,
-        );
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(_CheckeredPainter old) => false;
 }
 
 // ──────────────────────────────────────────────

@@ -652,16 +652,17 @@ class ApiService {
   /// 지도 구역 등록 (명세서 3-2: POST /api/v1/blocks)
   /// type 값: "hazard" (위험) 또는 "cultural" (문화) — 명세서 기준 소문자
   Future<void> postBlock(MapBlock block) async {
+    // id, createdAt은 서버가 생성하므로 요청 body에서 제외
     final body = <String, dynamic>{
-      'id':        block.id,
       'latitude':  block.center.latitude,
       'longitude': block.center.longitude,
       'radius':    block.radius,          // double, 단위: m
       'type':      block.type.name,       // 소문자 그대로: hazard, cultural, restaurant, cafe, tip, other
       'comment':   block.comment,
-      'createdAt': block.createdAt.toIso8601String(),
     };
-    await _post('/api/v1/blocks', body: body);
+    debugPrint('[postBlock] 요청 body: $body');
+    final res = await _post('/api/v1/blocks', body: body);
+    debugPrint('[postBlock] 응답: $res');
   }
 
   /// 지도 구역 삭제

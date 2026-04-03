@@ -3,10 +3,14 @@ import 'package:flutter_naver_map/flutter_naver_map.dart';
 import 'screens/main_scaffold.dart';
 import 'screens/sign_in_screen.dart';
 import 'services/api_service.dart';
+import 'services/user_profile_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
+  // 저장된 프로필 정보 복원
+  await UserProfileService().load();
+
   try {
     // 네이버 지도 SDK 초기화 
     await FlutterNaverMap().init(
@@ -21,6 +25,7 @@ void main() async {
 
   runApp(const MyApp());
 }
+
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});

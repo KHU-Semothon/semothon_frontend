@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'travel_experience_screen.dart';
 import '../services/api_service.dart';
+import '../services/user_profile_service.dart';
 import 'sign_in_screen.dart';
 import 'profile_edit_screen.dart';
 import 'my_activity_screen.dart';
@@ -36,14 +37,27 @@ class _MyPageScreenState extends State<MyPageScreen> {
   // ── 서버에서 프로필 로드 ──────────────────────────────
   Future<void> _loadProfile() async {
     setState(() => _isProfileLoading = true);
+
+    // 먼저 로컬에 저장된 프로필 상태 복원
+    final svc = UserProfileService();
+    if (svc.nickname.isNotEmpty) {
+      _nickname = svc.nickname;
+    }
+    _avatarFile = svc.avatarFile;
+
     try {
       final data = await _api.getMyProfile();
       if (mounted) {
         setState(() {
           // API 명세서 camelCase 키 기준
           // nickname (회원가입 파라미터) > username (게시글 응답 키) 순으로 시도
-          _nickname    = data['nickname']     as String? ??
-                         data['username']     as String? ?? '';
+          final serverNickname = data['nickname'] as String? ??
+                                 data['username'] as String? ?? '';
+          if (serverNickname.isNotEmpty) {
+            _nickname = serverNickname;
+            // 서버 닉네임도 서비스에 동기화
+            svc.setNickname(serverNickname);
+          }
           // profileImage (REST 관례)
           _avatarUrl   = data['profileImage'] as String? ?? '';
           // trustScore: 0~100 정수 값 (명세서 패턴 기반, 서버 기본값 90%)
@@ -259,25 +273,24 @@ class _MyPageScreenState extends State<MyPageScreen> {
                   Stack(
                     children: [
                       CircleAvatar(
-                        radius: 36,
-                        backgroundColor: const Color(0xFFD0D0D0),
+                        radius: 38,
+                        backgroundColor: const Color(0xFFF5F5F5),
                         backgroundImage: _avatarFile != null
                             ? FileImage(_avatarFile!) as ImageProvider
-                            : (_avatarUrl.isNotEmpty ? NetworkImage(_avatarUrl) : null),
-                        child: (_avatarFile == null && _avatarUrl.isEmpty)
-                            ? const Icon(Icons.person, size: 36, color: Colors.white)
-                            : null,
+                            : (_avatarUrl.isNotEmpty
+                                ? NetworkImage(_avatarUrl)
+                                : const AssetImage('assets/images/default_profile.png')),
                       ),
                       Positioned(
                         right: 0,
-                        top: 0,
+                        top: 2,
                         child: Container(
-                          width: 14,
-                          height: 14,
+                          width: 16,
+                          height: 16,
                           decoration: BoxDecoration(
-                            color: const Color(0xFF29B6F6),
+                            color: const Color(0xFF00E5FF), // 밝은 하늘색
                             shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 2),
+                            border: Border.all(color: Colors.white, width: 2.5),
                           ),
                         ),
                       ),
@@ -292,47 +305,25 @@ class _MyPageScreenState extends State<MyPageScreen> {
                           children: [
                             Text(
                               _nickname,
-                              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black),
                             ),
-                            const SizedBox(width: 6),
-                            // 인증 마크 (커스텀 색상 및 터치 인터랙션)
+                            const SizedBox(width: 8),
+                            // 인증 마크 (기능 유지)
+                            if (_isAuthMarkVisible)
                             GestureDetector(
                               onTap: _showColorPicker,
-                              behavior: HitTestBehavior.opaque,
-                              child: Padding(
-                                padding: const EdgeInsets.all(4.0),
-                                child: _isAuthMarkVisible 
-                                  ? Icon(
-                                      Icons.verified,
-                                      size: 18,
-                                      color: _authMarkColor,
-                                    )
-                                  : Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: Colors.grey[100],
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      child: const Row(
-                                        children: [
-                                          Icon(Icons.add, size: 10, color: Colors.grey),
-                                          SizedBox(width: 2),
-                                          Text('인증마크', style: TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold)),
-                                        ],
-                                      ),
-                                    ),
+                              child: Icon(
+                                Icons.verified,
+                                size: 20,
+                                color: _authMarkColor,
                               ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 4),
-                        // 여행/방문 횟수 선택 (인터랙션 추가)
-                        GestureDetector(
-                          onTap: _showExperiencePicker,
-                          child: Text(
-                            '일본 거주 $_livingYears년 · 방문 $_visitCount회',
-                            style: const TextStyle(fontSize: 13, color: Colors.grey),
-                          ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '일본 거주 ${_livingYears}년 · 신뢰도 ${(_trustLevel * 100).toInt()}%',
+                          style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
                         ),
                       ],
                     ),
@@ -349,54 +340,61 @@ class _MyPageScreenState extends State<MyPageScreen> {
                 children: [
                   Row(
                     children: [
-                      const Text('😊', style: TextStyle(fontSize: 16)),
-                      const SizedBox(width: 6),
+                      const Text('😊', style: TextStyle(fontSize: 18)),
+                      const SizedBox(width: 8),
                       Text(
                         '신뢰도 ${(_trustLevel * 100).toInt()}%',
-                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.grey.shade600),
                       ),
-                      const SizedBox(width: 8),
-                      const Text(
-                        '앙금류 사용자',
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                      const SizedBox(width: 10),
+                      Text(
+                        '검증된 사용자',
+                        style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 12),
                   LayoutBuilder(builder: (ctx, constraints) {
                     final total = constraints.maxWidth;
                     final filled = total * _trustLevel;
                     return Stack(
                       clipBehavior: Clip.none,
+                      alignment: Alignment.centerLeft,
                       children: [
                         // 배경 바
                         Container(
-                          height: 6,
+                          height: 8,
                           width: double.infinity,
                           decoration: BoxDecoration(
-                            color: Colors.grey[200],
-                            borderRadius: BorderRadius.circular(3),
+                            color: Colors.grey.shade200,
+                            borderRadius: BorderRadius.circular(4),
                           ),
                         ),
-                        // 채워진 바
+                        // 채워진 바 (오렌지/옐로우)
                         Container(
-                          height: 6,
+                          height: 8,
                           width: filled,
                           decoration: BoxDecoration(
-                            color: const Color(0xFFFF5A5F),
-                            borderRadius: BorderRadius.circular(3),
+                            color: const Color(0xFFFFA000),
+                            borderRadius: BorderRadius.circular(4),
                           ),
                         ),
-                        // 핸들 점
+                        // 핸들 점 (밝은 하늘색)
                         Positioned(
-                          left: filled - 10,
-                          top: -7,
+                          left: filled - 12,
                           child: Container(
-                            width: 20,
-                            height: 20,
+                            width: 24,
+                            height: 24,
                             decoration: const BoxDecoration(
-                              color: Color(0xFF29B6F6),
+                              color: Color(0xFF00E5FF),
                               shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black12,
+                                  blurRadius: 4,
+                                  offset: Offset(0, 2),
+                                )
+                              ],
                             ),
                           ),
                         ),
@@ -415,7 +413,7 @@ class _MyPageScreenState extends State<MyPageScreen> {
               child: Row(
                 children: [
                   Expanded(
-                    child: OutlinedButton(
+                    child: ElevatedButton(
                       onPressed: () async {
                         final result = await Navigator.push<ProfileEditResult>(
                           context,
@@ -428,88 +426,73 @@ class _MyPageScreenState extends State<MyPageScreen> {
                         );
                         if (result != null && mounted) {
                           setState(() {
-                            _nickname = result.nickname;
+                            _nickname   = result.nickname;
                             _avatarFile = result.avatarFile;
                           });
                         }
                       },
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: Color(0xFFDDDDDD)),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFFDE28A),
+                        foregroundColor: Colors.black,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
-                      child: const Text(
-                        '프로필 편집',
-                        style: TextStyle(color: Colors.black, fontWeight: FontWeight.w600, fontSize: 14),
-                      ),
+                      child: const Text('프로필 편집', style: TextStyle(fontWeight: FontWeight.bold)),
                     ),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 12),
                   Expanded(
-                    child: OutlinedButton(
+                    child: ElevatedButton(
                       onPressed: () {
-                        // 여행 경험 관리 화면으로 이동
                         Navigator.push(
                           context,
                           MaterialPageRoute(builder: (context) => const TravelExperienceScreen()),
                         );
                       },
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: Color(0xFFDDDDDD)),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFFDE28A),
+                        foregroundColor: Colors.black,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
-                      child: const Text(
-                        '여행 경험 관리',
-                        style: TextStyle(color: Colors.black, fontWeight: FontWeight.w600, fontSize: 14),
-                      ),
+                      child: const Text('여행 경험 관리', style: TextStyle(fontWeight: FontWeight.bold)),
                     ),
                   ),
                 ],
               ),
             ),
 
-            const SizedBox(height: 20),
-            const Divider(height: 1, color: Color(0xFFF0F0F0), thickness: 8),
+            const SizedBox(height: 8),
+            const Divider(height: 1, color: Color(0xFFEEEEEE), thickness: 8), // 두꺼운 구분선
 
             // ── 4. 메뉴 그룹 1: 활동 ───────────────────────────
             _buildMenuItem('내가 쓴 글', type: ActivityType.myPosts),
             _buildMenuItem('내가 단 댓글', type: ActivityType.myComments),
             _buildMenuItem('좋아요', type: ActivityType.likedPosts),
 
-            const Divider(height: 1, color: Color(0xFFF0F0F0), thickness: 8),
+            const Divider(height: 1, color: Color(0xFFEEEEEE), thickness: 8),
 
             // ── 5. 메뉴 그룹 2: 인증 ───────────────────────────
             _buildMenuItem('인증 상태'),
 
-            const Divider(height: 1, color: Color(0xFFF0F0F0), thickness: 8),
+            const Divider(height: 1, color: Color(0xFFEEEEEE), thickness: 8),
 
             // ── 6. 메뉴 그룹 3: 설정 ───────────────────────────
             _buildMenuItem('알림 설정'),
             _buildMenuItem('계정 설정'),
 
-            const Divider(height: 1, color: Color(0xFFF0F0F0), thickness: 8),
+            const Divider(height: 1, color: Color(0xFFEEEEEE), thickness: 8),
 
             // ── 7. 메뉴 그룹 4: 지원 ───────────────────────────
             _buildMenuItem('고객센터'),
             _buildMenuItem('신고 내역', type: ActivityType.reportedPosts),
 
-            const Divider(height: 1, color: Color(0xFFF0F0F0), thickness: 8),
+            const Divider(height: 1, color: Color(0xFFEEEEEE), thickness: 8),
 
             // ── 8. 로그아웃 ─────────────────────────────────────
-            InkWell(
-              onTap: _handleLogout,
-              child: const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-                child: Row(
-                  children: [
-                    Icon(Icons.logout, size: 18, color: Colors.red),
-                    SizedBox(width: 10),
-                    Text('로그아웃', style: TextStyle(fontSize: 15, color: Colors.red, fontWeight: FontWeight.w500)),
-                  ],
-                ),
-              ),
-            ),
+            _buildMenuItem('로그아웃', color: Colors.red, onTap: _handleLogout, icon: Icons.logout),
 
             const SizedBox(height: 40),
           ],
@@ -518,7 +501,7 @@ class _MyPageScreenState extends State<MyPageScreen> {
     );
   }
 
-  Widget _buildMenuItem(String title, {ActivityType? type, VoidCallback? onTap}) {
+  Widget _buildMenuItem(String title, {ActivityType? type, VoidCallback? onTap, Color? color, IconData? icon}) {
     return InkWell(
       onTap: () {
         if (onTap != null) {
@@ -527,15 +510,32 @@ class _MyPageScreenState extends State<MyPageScreen> {
           Navigator.push(context, MaterialPageRoute(builder: (_) => MyActivityScreen(type: type)));
         }
       },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(title, style: const TextStyle(fontSize: 15)),
-            const Icon(Icons.chevron_right, color: Colors.grey, size: 20),
-          ],
-        ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            child: Row(
+              children: [
+                if (icon != null) ...[
+                  Icon(icon, size: 20, color: color ?? Colors.black87),
+                  const SizedBox(width: 12),
+                ],
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 15,
+                    color: color ?? Colors.black,
+                    fontWeight: color != null ? FontWeight.w600 : FontWeight.w400,
+                  ),
+                ),
+                const Spacer(),
+                if (color == null)
+                  Icon(Icons.chevron_right, size: 18, color: Colors.grey.shade400),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: Color(0xFFF5F5F5), indent: 20, endIndent: 20),
+        ],
       ),
     );
   }

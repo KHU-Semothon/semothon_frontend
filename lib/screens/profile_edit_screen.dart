@@ -2,17 +2,24 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/api_service.dart';
+import '../services/user_profile_service.dart';
+import '../widgets/user_avatar.dart';
 
 /// 프로필 편집 결과 데이터
 class ProfileEditResult {
   final String nickname;
-  final File? avatarFile; // null이면 변경 없음
+  final File? avatarFile; // null이면 기본 프로필
+  final bool useDefault;
 
-  const ProfileEditResult({required this.nickname, this.avatarFile});
+  const ProfileEditResult({
+    required this.nickname,
+    this.avatarFile,
+    this.useDefault = true,
+  });
 }
 
 // ─────────────────────────────────────────────────────────────
-// 프로필 편집 바텀시트
+// 프로필 편집 화면
 // ─────────────────────────────────────────────────────────────
 class ProfileEditScreen extends StatefulWidget {
   final String currentNickname;
@@ -31,13 +38,17 @@ class ProfileEditScreen extends StatefulWidget {
 class _ProfileEditScreenState extends State<ProfileEditScreen> {
   late final TextEditingController _nicknameController;
   File? _selectedImage;
+  bool _useDefault = true;
   bool _isSaving = false;
 
   @override
   void initState() {
     super.initState();
     _nicknameController = TextEditingController(text: widget.currentNickname);
-    _selectedImage = widget.currentAvatarFile;
+    // 현재 전역 서비스 상태를 초기값으로
+    final svc = UserProfileService();
+    _useDefault    = svc.useDefault;
+    _selectedImage = svc.avatarFile;
   }
 
   @override
@@ -46,7 +57,77 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     super.dispose();
   }
 
-  // ── 이미지 선택 옵션 바텀시트 ─────────────────────────────────
+  // ── 프로필 사진 선택 다이얼로그 ─────────────────────────────
+  void _showAvatarChoiceDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text(
+          '프로필 사진 변경',
+          style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+          textAlign: TextAlign.center,
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 4),
+            // 기본 프로필 미리보기
+            CircleAvatar(
+              radius: 40,
+              backgroundImage: const AssetImage('assets/images/default_profile.png'),
+              backgroundColor: const Color(0xFFD0D0D0),
+            ),
+            const SizedBox(height: 16),
+            // 기본 프로필 버튼
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  setState(() {
+                    _useDefault    = true;
+                    _selectedImage = null;
+                  });
+                },
+                icon: const Icon(Icons.face, size: 18),
+                label: const Text('기본 프로필로 설정'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.black,
+                  side: const BorderSide(color: Color(0xFFDDDDDD)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            // 갤러리 선택 버튼
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _showImageSourceSheet();
+                },
+                icon: const Icon(Icons.photo_library_outlined, size: 18),
+                label: const Text('사진 첨부'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.black,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── 이미지 선택 소스 바텀시트 ─────────────────────────────────
   void _showImageSourceSheet() {
     showModalBottomSheet(
       context: context,
@@ -80,15 +161,6 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                 _pickImage(ImageSource.camera);
               },
             ),
-            if (_selectedImage != null)
-              ListTile(
-                leading: const Icon(Icons.delete_outline, color: Colors.red),
-                title: const Text('사진 삭제', style: TextStyle(color: Colors.red)),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  setState(() => _selectedImage = null);
-                },
-              ),
             const SizedBox(height: 8),
           ],
         ),
@@ -106,7 +178,10 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         imageQuality: 85,
       );
       if (picked != null && mounted) {
-        setState(() => _selectedImage = File(picked.path));
+        setState(() {
+          _selectedImage = File(picked.path);
+          _useDefault    = false;
+        });
       }
     } catch (e) {
       if (mounted) {
@@ -129,18 +204,36 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     setState(() => _isSaving = true);
 
     try {
-      final api = ApiService();
-      await api.updateProfile(
-        nickname: nickname,
-        avatarPath: _selectedImage?.path,
-      );
+      // 전역 프로필 서비스 업데이트 (즉시 반영)
+      final svc = UserProfileService();
+      await svc.setNickname(nickname);
+      if (_useDefault) {
+        await svc.setDefaultAvatar();
+      } else if (_selectedImage != null) {
+        await svc.setAvatarFile(_selectedImage!);
+      }
+
+      // 서버에도 저장 시도 (실패 무시)
+      try {
+        final api = ApiService();
+        await api.updateProfile(
+          nickname: nickname,
+          avatarPath: (!_useDefault && _selectedImage != null) ? _selectedImage!.path : null,
+        );
+      } catch (e) {
+        debugPrint('[ProfileEdit] 서버 저장 실패 (로컬 적용됨): $e');
+      }
 
       if (!mounted) return;
       setState(() => _isSaving = false);
 
       Navigator.pop(
         context,
-        ProfileEditResult(nickname: nickname, avatarFile: _selectedImage),
+        ProfileEditResult(
+          nickname: nickname,
+          avatarFile: _useDefault ? null : _selectedImage,
+          useDefault: _useDefault,
+        ),
       );
     } catch (e) {
       if (!mounted) return;
@@ -193,26 +286,23 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 
             // ── 프로필 사진 ─────────────────────────────────────────
             GestureDetector(
-              onTap: _showImageSourceSheet,
+              onTap: _showAvatarChoiceDialog,
               child: Stack(
                 children: [
-                  // 아바타
+                  // 아바타 (기본 or 선택한 사진)
                   Container(
                     width: 100,
                     height: 100,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: const Color(0xFFD0D0D0),
-                      image: _selectedImage != null
-                          ? DecorationImage(
-                              image: FileImage(_selectedImage!),
-                              fit: BoxFit.cover,
-                            )
-                          : null,
+                      image: DecorationImage(
+                        image: (!_useDefault && _selectedImage != null)
+                            ? FileImage(_selectedImage!) as ImageProvider
+                            : const AssetImage('assets/images/default_profile.png'),
+                        fit: BoxFit.cover,
+                      ),
                     ),
-                    child: _selectedImage == null
-                        ? const Icon(Icons.person, size: 52, color: Colors.white)
-                        : null,
                   ),
                   // 카메라 아이콘 배지
                   Positioned(
@@ -235,10 +325,10 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 
             const SizedBox(height: 10),
             GestureDetector(
-              onTap: _showImageSourceSheet,
-              child: const Text(
-                '사진 변경',
-                style: TextStyle(fontSize: 13, color: Colors.black54, fontWeight: FontWeight.w500),
+              onTap: _showAvatarChoiceDialog,
+              child: Text(
+                _useDefault ? '기본 프로필 사용 중  ·  탭하여 변경' : '사용자 지정 사진  ·  탭하여 변경',
+                style: const TextStyle(fontSize: 13, color: Colors.black54, fontWeight: FontWeight.w500),
               ),
             ),
 
