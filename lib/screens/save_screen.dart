@@ -834,3 +834,25 @@ class _FolderDetailScreenState extends State<_FolderDetailScreen> {
     );
   }
 }
+
+// ──────────────────────────────────────────────
+// 체크 무늬 배경 역할을 하는 스켈레톤/플레이스홀더화가
+// ──────────────────────────────────────────────
+class _CheckeredPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint1 = Paint()..color = Colors.grey[200]!;
+    final paint2 = Paint()..color = Colors.grey[300]!;
+    
+    final w = size.width / 2;
+    final h = size.height / 2;
+
+    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), paint1);
+    canvas.drawRect(Rect.fromLTWH(w, h, w, h), paint1);
+    canvas.drawRect(Rect.fromLTWH(w, 0, w, h), paint2);
+    canvas.drawRect(Rect.fromLTWH(0, h, w, h), paint2);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
