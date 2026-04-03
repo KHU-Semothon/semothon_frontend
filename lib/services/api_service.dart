@@ -1,8 +1,10 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/map_block.dart';
 import '../models/community_post.dart';
 import '../models/save_folder.dart';
+import '../models/my_comment.dart';
 
 class ApiService {
   // useMock = false: 실제 서버(daramjwi.com)와 통신합니다.
@@ -96,11 +98,16 @@ class ApiService {
 
   /// API 응답 공통 포맷 처리 헬퍼
   /// { "status": 200, "message": "...", "data": {...} }
-  Map<String, dynamic>? _extractBody(Response response) {
-    if (response.data != null && response.data is Map<String, dynamic>) {
-      return response.data as Map<String, dynamic>;
+  dynamic _extractBody(Response response) {
+    return response.data;
+  }
+
+  /// 'data' 키로 감싸져 있는지 확인하고 실제 데이터만 반환
+  dynamic _extractData(dynamic body) {
+    if (body is Map && body.containsKey('data')) {
+      return body['data'];
     }
-    return null;
+    return body;
   }
 
   // ==========================================
@@ -137,7 +144,8 @@ class ApiService {
         'password': password,
       });
       final body = _extractBody(response);
-      final data = body?['data'];
+      final data = _extractData(body);
+      
       final prefs = await SharedPreferences.getInstance();
 
       // Access Token 저장
@@ -217,14 +225,25 @@ class ApiService {
         options: Options(contentType: 'multipart/form-data'),
       );
       final body = _extractBody(response);
-      return body?['data'] ?? body ?? {};
+      final data = _extractData(body);
+      return (data is Map<String, dynamic>) ? data : {};
     } on DioException catch (e) {
       final errorMsg = e.response?.data?['message'] ?? e.message;
       throw Exception('프로필 수정 실패: $errorMsg');
     }
   }
 
-  /// 1-6. 게시글 신고 (작성자 신뢰도 -10%)
+  /// 1-6. 게시물 좋아요
+  Future<void> toggleLike(String postId) async {
+    try {
+      await _dio.post('/api/v1/posts/$postId/like');
+    } on DioException catch (e) {
+      final errorMsg = e.response?.data?['message'] ?? e.message;
+      throw Exception('좋아요 처리 실패: $errorMsg');
+    }
+  }
+
+  /// 1-7. 게시글 신고 (작성자 신뢰도 -10%)
   /// POST /api/v1/posts/{postId}/report
   Future<void> reportPost(String postId) async {
     try {
@@ -232,6 +251,26 @@ class ApiService {
     } on DioException catch (e) {
       final errorMsg = e.response?.data?['message'] ?? e.message;
       throw Exception('신고 실패: $errorMsg');
+    }
+  }
+
+  /// 1-8. 게시물 북마크 (저장) 토글
+  Future<void> toggleBookmark(String postId) async {
+    try {
+      await _dio.post('/api/v1/posts/$postId/bookmark');
+    } on DioException catch (e) {
+      final errorMsg = e.response?.data?['message'] ?? e.message;
+      throw Exception('북마크 처리 실패: $errorMsg');
+    }
+  }
+
+  /// 1-9. 댓글 작성
+  Future<void> postComment(String postId, String content) async {
+    try {
+      await _dio.post('/api/v1/questions/$postId/answers', data: {'content': content});
+    } on DioException catch (e) {
+      final errorMsg = e.response?.data?['message'] ?? e.message;
+      throw Exception('댓글 작성 실패: $errorMsg');
     }
   }
 
@@ -249,87 +288,356 @@ class ApiService {
     return token != null && token.isNotEmpty;
   }
 
-
   // ==========================================
-  // 2. Q&A (질문 및 답변)
+  // 2. Q&A (질문 및 답변) 명세서 기반
   // ==========================================
 
-  Future<void> postQuestion({
+  /// 2-1. 질문 목록 조회
+  Future<List<CommunityPost>> getQuestions({
+    String? category,
+    int page = 0,
+    int size = 10,
+  }) async {
+    try {
+      final response = await _dio.get('/api/v1/questions', queryParameters: {
+        if (category != null && category.isNotEmpty) 'category': category,
+        'page': page,
+        'size': size,
+      });
+
+      debugPrint('[getQuestions] status: ${response.statusCode}');
+      debugPrint('[getQuestions] raw data: ${response.data}');
+
+      final body = response.data;
+
+      // 응답 구조 유연하게 처리
+      List<dynamic> list = [];
+      if (body is List) {
+        list = body;
+      } else if (body is Map) {
+        final inner = body['data'] ?? body;
+        if (inner is List) {
+          list = inner;
+        } else if (inner is Map) {
+          final content = inner['content'] ?? inner['questions'] ?? inner['items'];
+          if (content is List) list = content;
+        }
+      }
+
+      debugPrint('[getQuestions] 파싱된 목록 수: ${list.length}');
+      return list.map<CommunityPost>((e) => CommunityPost.fromJson(e as Map<String, dynamic>)).toList();
+    } on DioException catch (e) {
+      debugPrint('[getQuestions] DioException: status=${e.response?.statusCode}, msg=${e.response?.data}');
+      final errorMsg = e.response?.data?['message'] ?? e.response?.data?.toString() ?? e.message;
+      throw Exception('질문 목록 조회 실패: $errorMsg');
+    } catch (e) {
+      debugPrint('[getQuestions] 예외 발생: $e');
+      throw Exception('게시글 파싱 오류: $e');
+    }
+  }
+
+  /// 2-2. 질문 상세 조회 (isLiked 포함)
+  Future<Map<String, dynamic>> getQuestionDetail(String questionId) async {
+    try {
+      final response = await _dio.get('/api/v1/questions/$questionId');
+      debugPrint('[getQuestionDetail] status: ${response.statusCode}');
+      debugPrint('[getQuestionDetail] raw: ${response.data}');
+
+      final body = response.data;
+      Map<String, dynamic> result = {};
+
+      if (body is Map<String, dynamic>) {
+        // {status, message, data: {...}} 형태
+        if (body.containsKey('data') && body['data'] is Map) {
+          result = Map<String, dynamic>.from(body['data'] as Map);
+        } else {
+          result = body;
+        }
+      }
+
+      debugPrint('[getQuestionDetail] 파싱 결과: keys=${result.keys.toList()}');
+      debugPrint('[getQuestionDetail] answers: ${result['answers']}');
+      return result;
+    } on DioException catch (e) {
+      debugPrint('[getQuestionDetail] 오류: status=${e.response?.statusCode}, body=${e.response?.data}');
+      final errorMsg = e.response?.data?['message'] ?? e.message;
+      throw Exception('질문 상세 조회 실패: $errorMsg');
+    }
+  }
+
+  /// 2-3. 질문 등록 - questionId 반환
+  Future<String?> createQuestion({
     required String title,
     required String content,
     required String category,
-    required double latitude,
-    required double longitude,
+    String? locationKeyword,
+    String? country,
+    List<String>? mediaUrls,
   }) async {
-    await _dio.post('/api/v1/questions', data: {
-      'title': title,
-      'content': content,
-      'category': category,
-      'latitude': latitude,
-      'longitude': longitude,
-    });
+    try {
+      // 토큰 존재 여부 사전 확인
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('accessToken');
+      if (token == null || token.isEmpty) {
+        throw Exception('로그인이 필요합니다. 다시 로그인 후 시도해주세요.');
+      }
+
+      final requestBody = {
+        'title': title,
+        'content': content,
+        'category': category,
+        if (locationKeyword != null && locationKeyword.isNotEmpty) 'locationKeyword': locationKeyword,
+        if (country != null && country.isNotEmpty) 'country': country,
+        if (mediaUrls != null && mediaUrls.isNotEmpty) 'mediaUrls': mediaUrls,
+      };
+      debugPrint('[createQuestion] 요청 body: $requestBody');
+      final response = await _dio.post('/api/v1/questions', data: requestBody);
+      debugPrint('[createQuestion] 응답 status: ${response.statusCode}, data: ${response.data}');
+
+      // 인스턴스 questionId 추출
+      final body = response.data;
+      String? newId;
+      if (body is Map) {
+        final data = body['data'] ?? body;
+        if (data is Map) {
+          newId = data['questionId']?.toString() ?? data['id']?.toString();
+        }
+      }
+      return newId;
+    } on DioException catch (e) {
+      debugPrint('[createQuestion] DioException: status=${e.response?.statusCode}');
+      debugPrint('[createQuestion] 응답 body: ${e.response?.data}');
+      final statusCode = e.response?.statusCode;
+      if (statusCode == 401) {
+        throw Exception('인증이 만료되었습니다. 다시 로그인 후 시도해주세요.');
+      }
+      if (statusCode == 403) {
+        throw Exception('게시물 등록 권한이 없습니다. 로그인 상태를 확인해주세요.');
+      }
+      // 서버가 List (validation error array) 또는 Map 으로 응답할 수 있음
+      final rawData = e.response?.data;
+      String errorMsg;
+      if (rawData is List && rawData.isNotEmpty) {
+        // [{"field": "...", "message": "..."}] 형태
+        final first = rawData.first;
+        errorMsg = (first is Map ? first['message']?.toString() : null) ?? rawData.toString();
+      } else if (rawData is Map) {
+        errorMsg = rawData['message']?.toString() ?? rawData.toString();
+      } else {
+        errorMsg = e.message ?? '알 수 없는 오류';
+      }
+      throw Exception('질문 등록 실패: $errorMsg');
+    }
   }
 
-  Future<List<dynamic>> getQuestions({int page = 0, int size = 10}) async {
-    final response = await _dio.get('/api/v1/questions', queryParameters: {
-      'page': page,
-      'size': size,
-    });
-    final body = _extractBody(response);
-    return body?['data'] ?? [];
+  /// 2-4. 질문 좋아요 토글
+  Future<Map<String, dynamic>> toggleQuestionLike(String questionId) async {
+    try {
+      final response = await _dio.post('/api/v1/questions/$questionId/like');
+      return _extractData(_extractBody(response)) as Map<String, dynamic>;
+    } on DioException catch (e) {
+      final errorMsg = e.response?.data?['message'] ?? e.message;
+      throw Exception('좋아요 처리 실패: $errorMsg');
+    }
   }
 
-  Future<Map<String, dynamic>> getQuestionDetail({required int questionId}) async {
-    final response = await _dio.get('/api/v1/questions/$questionId');
-    final body = _extractBody(response);
-    return body?['data'] ?? body ?? {};
+  /// 2-5. 답변 작성
+  Future<void> postAnswer(String questionId, String content) async {
+    try {
+      debugPrint('[postAnswer] questionId=$questionId, content=$content');
+      final response = await _dio.post(
+        '/api/v1/questions/$questionId/answers',
+        data: {'content': content},
+      );
+      debugPrint('[postAnswer] 성공: status=${response.statusCode}');
+    } on DioException catch (e) {
+      debugPrint('[postAnswer] DioException: status=${e.response?.statusCode}, body=${e.response?.data}');
+      final rawData = e.response?.data;
+      String errorMsg;
+      if (rawData is List && rawData.isNotEmpty) {
+        final first = rawData.first;
+        errorMsg = (first is Map ? first['message']?.toString() : null) ?? rawData.toString();
+      } else if (rawData is Map) {
+        errorMsg = rawData['message']?.toString() ?? rawData.toString();
+      } else {
+        errorMsg = e.message ?? '알 수 없는 오류';
+      }
+      throw Exception('답변 작성 실패: $errorMsg');
+    }
   }
 
-  Future<void> postAnswer({required int questionId, required String content}) async {
-    await _dio.post('/api/v1/questions/$questionId/answers', data: {
-      'content': content,
-    });
+  /// 2-6. 답변 채택
+  Future<void> acceptAnswer(String answerId) async {
+    try {
+      await _dio.post('/api/v1/answers/$answerId/accept');
+    } on DioException catch (e) {
+      final errorMsg = e.response?.data?['message'] ?? e.message;
+      throw Exception('답변 채택 실패: $errorMsg');
+    }
   }
 
-  Future<void> acceptAnswer({required int questionId, required int answerId}) async {
-    await _dio.patch('/api/v1/questions/$questionId/answers/$answerId/accept');
+  /// 2-8. 내가 쓴 글 목록
+  Future<List<CommunityPost>> getMyPosts() async {
+    try {
+      final response = await _dio.get('/api/v1/questions/my');
+      debugPrint('[getMyPosts] status: ${response.statusCode}, data: ${response.data}');
+      final body = response.data;
+      List<dynamic> list = [];
+      if (body is List) {
+        list = body;
+      } else if (body is Map) {
+        final inner = body['data'] ?? body;
+        if (inner is List) {
+          list = inner;
+        } else if (inner is Map) {
+          list = (inner['content'] ?? inner['questions'] ?? []) as List;
+        }
+      }
+      return list.map<CommunityPost>((e) => CommunityPost.fromJson(e as Map<String, dynamic>)).toList();
+    } on DioException catch (e) {
+      debugPrint('[getMyPosts] 오류: ${e.response?.statusCode} ${e.response?.data}');
+      throw Exception('내가 쓴 글을 불러오지 못했습니다: ${e.response?.data?['message'] ?? e.message}');
+    }
   }
 
+  /// 2-9. 내가 단 댓글 목록
+  Future<List<MyComment>> getMyComments() async {
+    try {
+      final response = await _dio.get('/api/v1/answers/my');
+      debugPrint('[getMyComments] status: ${response.statusCode}, data: ${response.data}');
+      final body = response.data;
+      List<dynamic> list = [];
+      if (body is List) {
+        list = body;
+      } else if (body is Map) {
+        final inner = body['data'] ?? body;
+        if (inner is List) {
+          list = inner;
+        } else if (inner is Map) {
+          list = (inner['content'] ?? inner['answers'] ?? []) as List;
+        }
+      }
+      return list.map<MyComment>((e) => MyComment.fromJson(e as Map<String, dynamic>)).toList();
+    } on DioException catch (e) {
+      debugPrint('[getMyComments] 오류: ${e.response?.statusCode} ${e.response?.data}');
+      throw Exception('내가 단 댓글을 불러오지 못했습니다: ${e.response?.data?['message'] ?? e.message}');
+    }
+  }
+
+  /// 2-10. 내가 좋아요한 글 목록
+  Future<List<CommunityPost>> getLikedPosts() async {
+    try {
+      final response = await _dio.get('/api/v1/questions/liked');
+      debugPrint('[getLikedPosts] status: ${response.statusCode}, data: ${response.data}');
+      final body = response.data;
+      List<dynamic> list = [];
+      if (body is List) {
+        list = body;
+      } else if (body is Map) {
+        final inner = body['data'] ?? body;
+        if (inner is List) {
+          list = inner;
+        } else if (inner is Map) {
+          list = (inner['content'] ?? inner['questions'] ?? []) as List;
+        }
+      }
+      return list.map<CommunityPost>((e) => CommunityPost.fromJson(e as Map<String, dynamic>)).toList();
+    } on DioException catch (e) {
+      debugPrint('[getLikedPosts] 오류: ${e.response?.statusCode} ${e.response?.data}');
+      throw Exception('좋아요한 글을 불러오지 못했습니다: ${e.response?.data?['message'] ?? e.message}');
+    }
+  }
+
+  /// 2-11. 신고 내역
+  Future<List<CommunityPost>> getReportedPosts() async {
+    try {
+      final response = await _dio.get('/api/v1/questions/reported');
+      debugPrint('[getReportedPosts] status: ${response.statusCode}, data: ${response.data}');
+      final body = response.data;
+      List<dynamic> list = [];
+      if (body is List) {
+        list = body;
+      } else if (body is Map) {
+        final inner = body['data'] ?? body;
+        if (inner is List) {
+          list = inner;
+        } else if (inner is Map) {
+          list = (inner['content'] ?? inner['questions'] ?? []) as List;
+        }
+      }
+      return list.map<CommunityPost>((e) => CommunityPost.fromJson(e as Map<String, dynamic>)).toList();
+    } on DioException catch (e) {
+      debugPrint('[getReportedPosts] 오류: ${e.response?.statusCode} ${e.response?.data}');
+      throw Exception('신고 내역을 불러오지 못했습니다: ${e.response?.data?['message'] ?? e.message}');
+    }
+  }
+
+  /// 2-7. 미디어 업로드 (멀티파트)
+  Future<List<String>> uploadMedia(List<String> filePaths) async {
+    try {
+      final List<MultipartFile> files = [];
+      for (final p in filePaths) {
+        files.add(await MultipartFile.fromFile(p, filename: p.split('/').last));
+      }
+      final formData = FormData.fromMap({'files': files});
+      final response = await _dio.post(
+        '/api/v1/media/upload',
+        data: formData,
+        options: Options(contentType: 'multipart/form-data'),
+      );
+      final data = _extractData(_extractBody(response));
+      // data: { "uploadedUrls": ["..."] }
+      if (data is Map && data.containsKey('uploadedUrls')) {
+        return (data['uploadedUrls'] as List).map((e) => e.toString()).toList();
+      }
+      return (data is List) ? data.map((e) => e.toString()).toList() : [];
+    } on DioException catch (e) {
+      final errorMsg = e.response?.data?['message'] ?? e.message;
+      throw Exception('파일 업로드 실패: $errorMsg');
+    }
+  }
 
   // ==========================================
   // 3. 지도 및 현지 정보 (Map & Pins)
   // ==========================================
 
+  /// 3-1. 핀 생성
   Future<void> postPin({
     required double latitude,
     required double longitude,
     required String pinType,
-    required String title,
-    required String description,
   }) async {
-    await _dio.post('/api/v1/pins', data: {
-      'latitude': latitude,
-      'longitude': longitude,
-      'pinType': pinType,
-      'title': title,
-      'description': description,
-    });
+    try {
+      await _dio.post('/api/v1/pins', data: {
+        'latitude': latitude,
+        'longitude': longitude,
+        'pinType': pinType,
+      });
+    } on DioException catch (e) {
+      final errorMsg = e.response?.data?['message'] ?? e.message;
+      throw Exception('핀 생성 실패: $errorMsg');
+    }
   }
 
+  /// 3-2. 범위 내 핀 목록 조회
   Future<List<dynamic>> getPinsInBounds({
     required double minLat,
     required double maxLat,
     required double minLng,
     required double maxLng,
   }) async {
-    final response = await _dio.get('/api/v1/pins', queryParameters: {
-      'minLat': minLat,
-      'maxLat': maxLat,
-      'minLng': minLng,
-      'maxLng': maxLng,
-    });
-    final body = _extractBody(response);
-    return body?['data'] ?? [];
+    try {
+      final response = await _dio.get('/api/v1/pins', queryParameters: {
+        'minLat': minLat,
+        'maxLat': maxLat,
+        'minLng': minLng,
+        'maxLng': maxLng,
+      });
+      return _extractData(_extractBody(response)) as List? ?? [];
+    } on DioException catch (e) {
+      final errorMsg = e.response?.data?['message'] ?? e.message;
+      throw Exception('핀 목록 조회 실패: $errorMsg');
+    }
   }
 
   // ==========================================
@@ -351,7 +659,8 @@ class ApiService {
         'maxLng': maxLng,
       });
       final body = _extractBody(response);
-      final list = (body?['data'] as List?) ?? [];
+      final data = _extractData(body);
+      final list = (data is List) ? data : [];
       return list.map((e) => MapBlock.fromJson(e as Map<String, dynamic>)).toList();
     } on DioException catch (e) {
       final errorMsg = e.response?.data?['message'] ?? e.message;
@@ -374,7 +683,8 @@ class ApiService {
     try {
       final response = await _dio.post('/api/v1/blocks/$id/vote', data: {'isKeep': isKeep});
       final body = _extractBody(response);
-      return MapBlock.fromJson(body?['data'] as Map<String, dynamic>);
+      final data = _extractData(body);
+      return MapBlock.fromJson(data as Map<String, dynamic>);
     } on DioException catch (e) {
       final errorMsg = e.response?.data?['message'] ?? e.message;
       throw Exception('투표 실패: $errorMsg');
@@ -412,7 +722,8 @@ class ApiService {
         'size': size,
       });
       final body = _extractBody(response);
-      final list = (body?['data'] as List?) ?? [];
+      final data = _extractData(body);
+      final list = (data is List) ? data : [];
       return list.map((e) => CommunityPost.fromJson(e as Map<String, dynamic>)).toList();
     } on DioException catch (e) {
       final errorMsg = e.response?.data?['message'] ?? e.message;
@@ -420,15 +731,42 @@ class ApiService {
     }
   }
 
-  /// 5-2. 커뮤니티 게시글 등록
-  Future<void> createPost(CommunityPost post) async {
+  /// 5-2. 커뮤니티 게시글 등록 (멀티미디어 지원)
+  Future<void> createPost(CommunityPost post, {List<String>? imagePaths, String? videoPath}) async {
     try {
-      await _dio.post('/api/v1/posts', data: post.toJson());
+      // JSON 데이터를 Map으로 변환
+      final Map<String, dynamic> postData = post.toJson();
+      
+      // FormData 구성을 위한 맵 생성
+      final Map<String, dynamic> formDataMap = {...postData};
+
+      // 이미지 파일 추가
+      if (imagePaths != null && imagePaths.isNotEmpty) {
+        final List<MultipartFile> imageFiles = [];
+        for (final path in imagePaths) {
+          imageFiles.add(await MultipartFile.fromFile(path, filename: path.split('/').last));
+        }
+        formDataMap['images'] = imageFiles;
+      }
+
+      // 동영상 파일 추가
+      if (videoPath != null) {
+        formDataMap['video'] = await MultipartFile.fromFile(videoPath, filename: videoPath.split('/').last);
+      }
+
+      final formData = FormData.fromMap(formDataMap);
+
+      await _dio.post(
+        '/api/v1/posts', 
+        data: formData,
+        options: Options(contentType: 'multipart/form-data'),
+      );
     } on DioException catch (e) {
       final errorMsg = e.response?.data?['message'] ?? e.message;
       throw Exception('게시글 등록 실패: $errorMsg');
     }
   }
+
 
 
   // ==========================================
@@ -440,7 +778,8 @@ class ApiService {
     try {
       final response = await _dio.get('/api/v1/folders');
       final body = _extractBody(response);
-      final list = (body?['data'] as List?) ?? [];
+      final data = _extractData(body);
+      final List list = (data is List) ? data : (data is Map ? (data['folders'] ?? []) : []);
       return list.map((e) => SaveFolder.fromJson(e as Map<String, dynamic>)).toList();
     } on DioException catch (e) {
       final errorMsg = e.response?.data?['message'] ?? e.message;
@@ -448,15 +787,59 @@ class ApiService {
     }
   }
 
-  /// 6-2. 폴더 생성
-  Future<SaveFolder> createFolder(String name) async {
+  /// 6-2. 폴더 생성 (이미지 첨부 지원)
+  Future<SaveFolder> createFolder(String name, {String? imagePath}) async {
     try {
-      final response = await _dio.post('/api/v1/folders', data: {'name': name});
-      final body = _extractBody(response);
-      return SaveFolder.fromJson(body?['data'] as Map<String, dynamic>);
+      final dynamic requestData;
+      final Options? options;
+
+      if (imagePath != null) {
+        requestData = FormData.fromMap({
+          'name': name,
+          'image': await MultipartFile.fromFile(imagePath, filename: 'folder_thumb.jpg'),
+        });
+        options = Options(contentType: 'multipart/form-data');
+      } else {
+        requestData = {'name': name};
+        options = null;
+      }
+
+      debugPrint('[createFolder] 요청 body: $requestData');
+      final response = await _dio.post(
+        '/api/v1/folders',
+        data: requestData,
+        options: options,
+      );
+      debugPrint('[createFolder] 응답 status: ${response.statusCode}, data: ${response.data}');
+
+      final body = response.data;
+      dynamic responseData;
+      if (body is Map && body.containsKey('data')) {
+        responseData = body['data'];
+      } else if (body is Map) {
+        responseData = body;
+      }
+
+      if (responseData == null || responseData is! Map) {
+        throw Exception('폴더 생성 응답 데이터가 없습니다.');
+      }
+      return SaveFolder.fromJson(responseData as Map<String, dynamic>);
     } on DioException catch (e) {
-      final errorMsg = e.response?.data?['message'] ?? e.message;
+      debugPrint('[createFolder] DioException: status=${e.response?.statusCode}, body=${e.response?.data}');
+      final rawData = e.response?.data;
+      String errorMsg;
+      if (rawData is List && rawData.isNotEmpty) {
+        final first = rawData.first;
+        errorMsg = (first is Map ? first['message']?.toString() : null) ?? rawData.toString();
+      } else if (rawData is Map) {
+        errorMsg = rawData['message']?.toString() ?? rawData.toString();
+      } else {
+        errorMsg = '서버 내부 오류가 발생했습니다.';
+      }
       throw Exception('폴더 생성 실패: $errorMsg');
+    } catch (e) {
+      debugPrint('[createFolder] 예외: $e');
+      throw Exception('폴더 생성 실패: $e');
     }
   }
 
@@ -518,7 +901,8 @@ class ApiService {
         queryParameters: {'page': page, 'size': size},
       );
       final body = _extractBody(response);
-      final list = (body?['data'] as List?) ?? [];
+      final data = _extractData(body);
+      final list = (data is List) ? data : [];
       return list.map((e) => CommunityPost.fromJson(e as Map<String, dynamic>)).toList();
     } on DioException catch (e) {
       final errorMsg = e.response?.data?['message'] ?? e.message;

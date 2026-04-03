@@ -4,6 +4,7 @@ import 'travel_experience_screen.dart';
 import '../services/api_service.dart';
 import 'sign_in_screen.dart';
 import 'profile_edit_screen.dart';
+import 'my_activity_screen.dart';
 
 class MyPageScreen extends StatefulWidget {
   const MyPageScreen({super.key});
@@ -45,8 +46,8 @@ class _MyPageScreenState extends State<MyPageScreen> {
                          data['username']     as String? ?? '';
           // profileImage (REST 관례)
           _avatarUrl   = data['profileImage'] as String? ?? '';
-          // trustScore: 0~100 정수 값 (명세서 패턴 기반)
-          _trustLevel  = (data['trustScore']  as num?)?.toDouble() ?? 0.0;
+          // trustScore: 0~100 정수 값 (명세서 패턴 기반, 서버 기본값 90%)
+          _trustLevel  = (data['trustScore']  as num?)?.toDouble() ?? 90.0;
           if (_trustLevel > 1) _trustLevel /= 100; // 0~100이면 0~1로 변환
           // 거주/방문 정보
           _livingYears = (data['livingYears'] as num?)?.toInt() ?? _livingYears;
@@ -74,59 +75,61 @@ class _MyPageScreenState extends State<MyPageScreen> {
   void _showColorPicker() {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('인증 마크 설정', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: double.maxFinite,
-              child: GridView.builder(
-                shrinkWrap: true,
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 4,
-                  mainAxisSpacing: 10,
-                  crossAxisSpacing: 10,
-                ),
-                itemCount: _rainbowColors.length,
-                itemBuilder: (context, index) {
+        content: SizedBox(
+          width: MediaQuery.of(context).size.width * 0.8,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                alignment: WrapAlignment.center,
+                children: _rainbowColors.map((color) {
+                  final isSelected = _isAuthMarkVisible && _authMarkColor == color;
                   return GestureDetector(
                     onTap: () {
                       setState(() {
-                        _authMarkColor = _rainbowColors[index];
+                        _authMarkColor = color;
                         _isAuthMarkVisible = true;
                       });
-                      Navigator.pop(context);
+                      Navigator.pop(ctx);
                     },
                     child: Container(
+                      width: 44,
+                      height: 44,
                       decoration: BoxDecoration(
-                        color: _rainbowColors[index],
+                        color: color,
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: (_isAuthMarkVisible && _authMarkColor == _rainbowColors[index]) ? Colors.black : Colors.transparent,
-                          width: 2,
+                          color: isSelected ? Colors.black : Colors.transparent,
+                          width: 2.5,
                         ),
+                        boxShadow: [
+                          if (isSelected) BoxShadow(color: color.withAlpha(100), blurRadius: 8, spreadRadius: 1),
+                        ],
                       ),
                     ),
                   );
-                },
+                }).toList(),
               ),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: TextButton(
-                onPressed: () {
-                  setState(() => _isAuthMarkVisible = false);
-                  Navigator.pop(context);
-                },
-                style: TextButton.styleFrom(
-                  foregroundColor: Colors.red,
+              const SizedBox(height: 30),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton(
+                  onPressed: () {
+                    setState(() => _isAuthMarkVisible = false);
+                    Navigator.pop(ctx);
+                  },
+                  child: const Text('인증마크 제거', style: TextStyle(color: Colors.red, fontWeight: FontWeight.w600)),
                 ),
-                child: const Text('인증마크 삭제', style: TextStyle(fontWeight: FontWeight.bold)),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -295,26 +298,30 @@ class _MyPageScreenState extends State<MyPageScreen> {
                             // 인증 마크 (커스텀 색상 및 터치 인터랙션)
                             GestureDetector(
                               onTap: _showColorPicker,
-                              child: _isAuthMarkVisible 
-                                ? Icon(
-                                    Icons.verified,
-                                    size: 18,
-                                    color: _authMarkColor,
-                                  )
-                                : Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: Colors.grey[100],
-                                      borderRadius: BorderRadius.circular(10),
+                              behavior: HitTestBehavior.opaque,
+                              child: Padding(
+                                padding: const EdgeInsets.all(4.0),
+                                child: _isAuthMarkVisible 
+                                  ? Icon(
+                                      Icons.verified,
+                                      size: 18,
+                                      color: _authMarkColor,
+                                    )
+                                  : Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey[100],
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: const Row(
+                                        children: [
+                                          Icon(Icons.add, size: 10, color: Colors.grey),
+                                          SizedBox(width: 2),
+                                          Text('인증마크', style: TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold)),
+                                        ],
+                                      ),
                                     ),
-                                    child: const Row(
-                                      children: [
-                                        Icon(Icons.add, size: 10, color: Colors.grey),
-                                        SizedBox(width: 2),
-                                        Text('인증마크', style: TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold)),
-                                      ],
-                                    ),
-                                  ),
+                              ),
                             ),
                           ],
                         ),
@@ -466,9 +473,9 @@ class _MyPageScreenState extends State<MyPageScreen> {
             const Divider(height: 1, color: Color(0xFFF0F0F0), thickness: 8),
 
             // ── 4. 메뉴 그룹 1: 활동 ───────────────────────────
-            _buildMenuItem('내가 쓴 글'),
-            _buildMenuItem('내가 단 댓글'),
-            _buildMenuItem('좋아요'),
+            _buildMenuItem('내가 쓴 글', type: ActivityType.myPosts),
+            _buildMenuItem('내가 단 댓글', type: ActivityType.myComments),
+            _buildMenuItem('좋아요', type: ActivityType.likedPosts),
 
             const Divider(height: 1, color: Color(0xFFF0F0F0), thickness: 8),
 
@@ -485,7 +492,7 @@ class _MyPageScreenState extends State<MyPageScreen> {
 
             // ── 7. 메뉴 그룹 4: 지원 ───────────────────────────
             _buildMenuItem('고객센터'),
-            _buildMenuItem('신고 내역'),
+            _buildMenuItem('신고 내역', type: ActivityType.reportedPosts),
 
             const Divider(height: 1, color: Color(0xFFF0F0F0), thickness: 8),
 
@@ -511,9 +518,15 @@ class _MyPageScreenState extends State<MyPageScreen> {
     );
   }
 
-  Widget _buildMenuItem(String title) {
+  Widget _buildMenuItem(String title, {ActivityType? type, VoidCallback? onTap}) {
     return InkWell(
-      onTap: () {},
+      onTap: () {
+        if (onTap != null) {
+          onTap();
+        } else if (type != null) {
+          Navigator.push(context, MaterialPageRoute(builder: (_) => MyActivityScreen(type: type)));
+        }
+      },
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
         child: Row(

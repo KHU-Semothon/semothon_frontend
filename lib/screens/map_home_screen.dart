@@ -43,6 +43,7 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
   final TextEditingController _commentController = TextEditingController();
 
   BlockType? _filterType;
+  BlockType? _listFilterType; // 하단 리스트 전용 필터 추가
   final GlobalKey _filterButtonKey = GlobalKey();
 
   // 개인적으로 숨긴 블록 ID 목록 (위험/문화 구역 숨기기용)
@@ -52,11 +53,19 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
   final List<NMarker> _folderPostMarkers = [];
   String? _activeFolderName; // 현재 활성 폴더 이름 (UI 표시용)
 
-  /// 현재 필터 설정 및 숨김 설정을 반영하여 걸러진 블록 목록
+  /// 지도 오버레이용 필터 설정 및 숨김 설정을 반영하여 걸러진 블록 목록
   List<MapBlock> get _filteredBlocks {
     final base = _filterType == null
         ? _savedBlocks
         : _savedBlocks.where((b) => b.type == _filterType).toList();
+    return base.where((b) => !_hiddenBlockIds.contains(b.id)).toList();
+  }
+
+  /// 하단 리스트 전용 필터가 적용된 블록 목록
+  List<MapBlock> get _listFilteredBlocks {
+    final base = _listFilterType == null
+        ? _savedBlocks
+        : _savedBlocks.where((b) => b.type == _listFilterType).toList();
     return base.where((b) => !_hiddenBlockIds.contains(b.id)).toList();
   }
 
@@ -313,15 +322,15 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
     }
   }
 
-  // 핀 유형별 색상 반환
+  // 핀 유형별 색상 반환 (등록 모드 및 리스트 박스 색상 동기화)
   Color _getPinColor(BlockType type) {
     switch (type) {
       case BlockType.restaurant: return Colors.orange;
-      case BlockType.cafe: return Colors.brown;
-      case BlockType.tip: return Colors.amber;
-      case BlockType.other: return Colors.blueGrey;
-      case BlockType.hazard: return Colors.red;
-      case BlockType.cultural: return Colors.blue;
+      case BlockType.cafe:       return Colors.brown;
+      case BlockType.tip:        return const Color(0xFFFDE28A); // 노란색
+      case BlockType.hazard:     return Colors.red;
+      case BlockType.cultural:   return Colors.blue;
+      case BlockType.other:      return Colors.blueGrey;
     }
   }
 
@@ -718,7 +727,8 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   CustomSearchBar(
-                    hintText: '원하는 지역을 검색하세요 (예: 시부야)',
+                    hintText: '원하는 지역을 검색하세요',
+                    backgroundColor: const Color(0xFFD9D9D9).withValues(alpha: 0.9),
                     controller: _searchController,
                     leftIcon: Icons.search,
                     rightIcon: _searchController.text.isNotEmpty ? Icons.cancel : Icons.edit,
@@ -796,10 +806,10 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                             },
                             child: Container(
                               key: _filterButtonKey,
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                               decoration: BoxDecoration(
-                                color: _filterType != null ? Colors.black : Colors.white,
-                                borderRadius: BorderRadius.circular(20),
+                                color: const Color(0xFFFDE28A),
+                                borderRadius: BorderRadius.circular(16),
                                 boxShadow: [
                                   BoxShadow(
                                     color: Colors.black.withAlpha(13),
@@ -1058,11 +1068,11 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                     children: [
                       const SizedBox(height: 12),
                       Container(
-                        width: 40,
-                        height: 4,
+                        width: 50,
+                        height: 5,
                         decoration: BoxDecoration(
                           color: Colors.grey[300],
-                          borderRadius: BorderRadius.circular(2),
+                          borderRadius: BorderRadius.circular(2.5),
                         ),
                       ),
                       const SizedBox(height: 16),
@@ -1073,17 +1083,17 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                         child: ListView.separated(
                           controller: scrollController,
                           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                          itemCount: _filteredBlocks.isEmpty ? 1 : _filteredBlocks.length,
+                          itemCount: _listFilteredBlocks.isEmpty ? 1 : _listFilteredBlocks.length,
                           separatorBuilder: (context, index) => const SizedBox(height: 12),
                           itemBuilder: (context, index) {
-                            if (_filteredBlocks.isEmpty) {
+                            if (_listFilteredBlocks.isEmpty) {
                               return Padding(
                                 padding: const EdgeInsets.only(top: 40.0),
                                 child: Center(
                                   child: Text(
-                                    _filterType == null
+                                    _listFilterType == null
                                         ? '등록된 정보가 없습니다.\n지도를 탭하여 정보를 등록해보세요.'
-                                        : '이 범위에 ${_getTypeLabel(_filterType!)} 정보가 없습니다.',
+                                        : '이 범위에 ${_getTypeLabel(_listFilterType!)} 정보가 없습니다.',
                                     textAlign: TextAlign.center,
                                     style: const TextStyle(color: Colors.grey, height: 1.5),
                                   ),
@@ -1091,7 +1101,7 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                               );
                             }
 
-                            final block = _filteredBlocks[index];
+                            final block = _listFilteredBlocks[index];
                             return GestureDetector(
                               onTap: () {
                                 if (_mapController != null) {
@@ -1107,69 +1117,69 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
                                 }
                               },
                               child: Container(
-                                height: 80,
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFFF5F5F5),
-                                  borderRadius: BorderRadius.circular(12),
+                                  // 구역 유형별 색상의 연한 버전 적용
+                                  color: _getPinColor(block.type).withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: _getPinColor(block.type).withOpacity(0.2),
+                                    width: 1,
+                                  ),
                                 ),
                                 child: Row(
-                                children: [
-                                  Container(
-                                    width: 48,
-                                    decoration: BoxDecoration(
-                                      color: _getPinColor(block.type).withValues(alpha: 0.2),
-                                      borderRadius: const BorderRadius.horizontal(left: Radius.circular(12)),
-                                    ),
-                                    child: Center(
-                                      child: Container(
-                                        width: 12,
-                                        height: 12,
-                                        decoration: BoxDecoration(
-                                          color: _getPinColor(block.type),
-                                          shape: BoxShape.circle,
-                                        ),
+                                  children: [
+                                    // 아이콘 영역 (이미지 느낌 살리기)
+                                    Container(
+                                      width: 44,
+                                      height: 44,
+                                      decoration: BoxDecoration(
+                                        color: _getPinColor(block.type).withOpacity(0.2),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: Icon(
+                                        _getPinIcon(block.type),
+                                        color: _getPinColor(block.type),
+                                        size: 20,
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Row(
-                                          children: [
-                                            Text(_getTypeLabel(block.type), style: const TextStyle(fontWeight: FontWeight.bold)),
-                                            const SizedBox(width: 6),
-                                            if (!block.isPin) // 공유 구역만 잔여 시간 표시
-                                            Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                              decoration: BoxDecoration(
-                                                color: Colors.white,
-                                                borderRadius: BorderRadius.circular(4),
-                                                border: Border.all(color: Colors.grey.shade300),
-                                              ),
-                                              child: Text(
-                                                block.remainingTimeString,
-                                                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.redAccent),
-                                              ),
+                                    const SizedBox(width: 16),
+                                    Expanded(
+                                      child: Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            _getTypeLabel(block.type),
+                                            style: const TextStyle(
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.black,
                                             ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(block.comment, style: const TextStyle(color: Colors.grey, fontSize: 12), overflow: TextOverflow.ellipsis,),
-                                      ],
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            block.comment.isEmpty ? '내용 없음' : block.comment,
+                                            style: TextStyle(
+                                              fontSize: 13,
+                                              color: Colors.black.withOpacity(0.6),
+                                            ),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                  // 삭제/숨기기 버튼
-                                  IconButton(
-                                    onPressed: () => _deleteBlock(block),
-                                    icon: Icon(Icons.delete_outline, color: Colors.grey[400], size: 20),
-                                  ),
-                                  const SizedBox(width: 8),
-                                ],
+                                    // 삭제 아이콘
+                                    IconButton(
+                                      onPressed: () => _deleteBlock(block),
+                                      icon: const Icon(Icons.delete_outline, color: Colors.black54),
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
                           );
                         },
                       ),
@@ -1318,7 +1328,7 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
         children: items.map((type) {
-          final isSelected = _filterType == type;
+          final isSelected = _listFilterType == type;
           final label = type == null ? '전체' : _getTypeLabel(type);
           final color = type == null ? Colors.black : _getPinColor(type);
 
@@ -1326,26 +1336,29 @@ class _MapHomeScreenState extends State<MapHomeScreen> {
             padding: const EdgeInsets.only(right: 8),
             child: GestureDetector(
               onTap: () {
-                setState(() => _filterType = type);
-                _applyFilterToOverlays();
+                setState(() => _listFilterType = type);
               },
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
                 decoration: BoxDecoration(
-                  color: isSelected ? color : Colors.grey[100],
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: isSelected ? color : Colors.transparent,
-                    width: 1.5,
-                  ),
+                  color: isSelected ? _getPinColor(type ?? BlockType.other) : Colors.grey[100],
+                  borderRadius: BorderRadius.circular(18),
+                  boxShadow: [
+                    if (isSelected)
+                      BoxShadow(
+                        color: _getPinColor(type ?? BlockType.other).withOpacity(0.3),
+                        blurRadius: 4, 
+                        offset: const Offset(0, 2),
+                      )
+                  ],
                 ),
                 child: Text(
                   label,
                   style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: isSelected ? Colors.white : Colors.grey[600],
+                    fontSize: 14,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+                    color: isSelected ? Colors.white : Colors.grey[700],
                   ),
                 ),
               ),

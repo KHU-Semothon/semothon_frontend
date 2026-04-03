@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import '../services/api_service.dart';
 
 /// 프로필 편집 결과 데이터
 class ProfileEditResult {
@@ -127,16 +128,27 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 
     setState(() => _isSaving = true);
 
-    // TODO: 실제 서버 연동 시 api.updateProfile(nickname, avatarFile)
-    await Future.delayed(const Duration(milliseconds: 600)); // 저장 시뮬레이션
+    try {
+      final api = ApiService();
+      await api.updateProfile(
+        nickname: nickname,
+        avatarPath: _selectedImage?.path,
+      );
 
-    if (!mounted) return;
-    setState(() => _isSaving = false);
+      if (!mounted) return;
+      setState(() => _isSaving = false);
 
-    Navigator.pop(
-      context,
-      ProfileEditResult(nickname: nickname, avatarFile: _selectedImage),
-    );
+      Navigator.pop(
+        context,
+        ProfileEditResult(nickname: nickname, avatarFile: _selectedImage),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('프로필 저장 실패: $e')),
+      );
+    }
   }
 
   @override

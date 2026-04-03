@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_naver_map/flutter_naver_map.dart';
 import 'package:http/http.dart' as http;
+import '../widgets/custom_search_bar.dart';
 
 /// 반환값: 선택된 위치 정보
 class LocationPickerResult {
@@ -27,6 +28,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
   String _address = '지도를 탭해서 위치를 선택하세요';
   bool _isGeocodingLoading = false;
   NMarker? _marker;
+  final TextEditingController _searchController = TextEditingController();
 
   static const NLatLng _defaultPosition = NLatLng(35.6584, 139.7014); // 시부야
 
@@ -56,16 +58,73 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final displayName = data['display_name'] as String? ?? '';
-        // 주소 간략화: 앞 2~3 구성 요소만
-        final parts = displayName.split(', ');
-        final shortAddr = parts.take(4).join(' ');
-        setState(() => _address = shortAddr.isNotEmpty ? shortAddr : displayName);
+        final address = data['address'] as Map<String, dynamic>? ?? {};
+        
+        // 지역명 추출 (도시, 구, 동 등 가장 직관적인 부분)
+        String? city = address['city'] ?? address['town'] ?? address['village'] ?? address['suburb'];
+        String? district = address['neighbourhood'] ?? address['quarter'] ?? address['city_district'];
+        
+        String shortAddr = '';
+        if (city != null && district != null) {
+          shortAddr = '$city $district';
+        } else {
+          // 위 방법으로 안나오면 기존처럼 split 처리하되 뒤에서부터 주요 명칭 추출
+          final displayName = data['display_name'] as String? ?? '';
+          final parts = displayName.split(', ');
+          // 보통 뒤에서 2~4번째가 도시/지역 명칭 (국가 제외)
+          if (parts.length >= 3) {
+            shortAddr = '${parts[parts.length - 3]} ${parts[parts.length - 2]}';
+          } else {
+            shortAddr = displayName;
+          }
+        }
+        
+        setState(() => _address = shortAddr.isNotEmpty ? shortAddr : '알 수 없는 장소');
       }
     } catch (e) {
       setState(() => _address = '주소를 가져올 수 없습니다');
     } finally {
       if (mounted) setState(() => _isGeocodingLoading = false);
+    }
+  }
+  // 지역 검색 및 카메라 이동 함수
+  Future<void> _searchAndMove(String query) async {
+    if (query.isEmpty) return;
+    FocusScope.of(context).unfocus();
+
+    final url = Uri.https('nominatim.openstreetmap.org', '/search', {
+      'q': query.trim(),
+      'format': 'json',
+      'limit': '1',
+    });
+
+    try {
+      final response = await http.get(url, headers: {
+        'User-Agent': 'SemothonApp/1.0',
+        'Accept-Language': 'ko,en',
+      });
+
+      if (response.statusCode == 200) {
+        final List<dynamic> results = jsonDecode(response.body);
+        if (results.isNotEmpty) {
+          final double lat = double.parse(results[0]['lat'] as String);
+          final double lng = double.parse(results[0]['lon'] as String);
+          final newPos = NLatLng(lat, lng);
+
+          if (_mapController != null) {
+            final cameraUpdate = NCameraUpdate.withParams(target: newPos, zoom: 15);
+            cameraUpdate.setAnimation(animation: NCameraAnimation.fly, duration: const Duration(milliseconds: 600));
+            _mapController!.updateCamera(cameraUpdate);
+            
+            // 검색된 위치를 즉시 선택 상태로 변경
+            _onMapTapped(NPoint(0,0), newPos);
+          }
+        } else {
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('검색 결과가 없습니다.')));
+        }
+      }
+    } catch (e) {
+      debugPrint('검색 오류: $e');
     }
   }
 
@@ -138,6 +197,26 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
               }
             },
             onMapTapped: _onMapTapped,
+          ),
+
+          // 검색창
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: CustomSearchBar(
+                hintText: '장소 검색',
+                backgroundColor: const Color(0xFFD9D9D9).withValues(alpha: 0.9),
+                controller: _searchController,
+                leftIcon: Icons.search,
+                rightIcon: _searchController.text.isNotEmpty ? Icons.cancel : null,
+                onChanged: (val) => setState(() {}),
+                onSubmitted: _searchAndMove,
+                onRightIconTap: () {
+                  _searchController.clear();
+                  setState(() {});
+                },
+              ),
+            ),
           ),
 
           // 중앙 크로스헤어 힌트

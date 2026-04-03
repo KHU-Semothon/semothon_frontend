@@ -1,4 +1,6 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../models/save_folder.dart';
 import '../models/community_post.dart';
 import '../services/api_service.dart';
@@ -47,57 +49,129 @@ class _SaveScreenState extends State<SaveScreen> {
     }
   }
 
-  // ── 6-2. 폴더 추가 ────────────────────────────
+  // ── 6-2. 폴더 추가 (이미지 첨부 포함) ────────────────────────────
   Future<void> _showAddFolderDialog() async {
     final controller = TextEditingController();
-    final name = await showDialog<String>(
+    final picker = ImagePicker();
+    XFile? pickedImage;
+
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text(
-          '새 폴더',
-          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text(
+            '새 폴더',
+            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 이미지 선택 영역
+              GestureDetector(
+                onTap: () async {
+                  final img = await picker.pickImage(source: ImageSource.gallery);
+                  if (img != null) {
+                    setDialogState(() => pickedImage = img);
+                  }
+                },
+                child: Container(
+                  width: double.infinity,
+                  height: 120,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey[300]!),
+                    image: pickedImage != null
+                        ? DecorationImage(
+                            image: FileImage(File(pickedImage!.path)),
+                            fit: BoxFit.cover,
+                          )
+                        : null,
+                  ),
+                  child: pickedImage == null
+                      ? Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.add_photo_alternate_outlined,
+                                color: Colors.grey[400], size: 32),
+                            const SizedBox(height: 8),
+                            Text('대표 사진 추가 (선택)',
+                                style: TextStyle(
+                                    color: Colors.grey[500], fontSize: 13)),
+                          ],
+                        )
+                      : Container(
+                          alignment: Alignment.topRight,
+                          padding: const EdgeInsets.all(4),
+                          child: Container(
+                            decoration: const BoxDecoration(
+                              color: Colors.black54,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.close,
+                                color: Colors.white, size: 16),
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: '폴더 이름을 입력하세요',
+                  hintStyle: TextStyle(color: Colors.grey[400]),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(color: Colors.grey[300]!),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: Colors.black),
+                  ),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text('취소', style: TextStyle(color: Colors.grey[600])),
+            ),
+            TextButton(
+              onPressed: () {
+                final name = controller.text.trim();
+                if (name.isNotEmpty) {
+                  Navigator.pop(ctx, {
+                    'name': name,
+                    'imagePath': pickedImage?.path,
+                  });
+                }
+              },
+              child: const Text(
+                '만들기',
+                style:
+                    TextStyle(color: Colors.black, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
         ),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: InputDecoration(
-            hintText: '폴더 이름을 입력하세요',
-            hintStyle: TextStyle(color: Colors.grey[400]),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: BorderSide(color: Colors.grey[300]!),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: Colors.black),
-            ),
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text('취소', style: TextStyle(color: Colors.grey[600])),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: const Text(
-              '만들기',
-              style: TextStyle(color: Colors.black, fontWeight: FontWeight.w600),
-            ),
-          ),
-        ],
       ),
     );
 
-    if (name == null || name.isEmpty) return;
+    if (result == null || result['name'] == null) return;
+
+    final name = result['name'] as String;
+    final imagePath = result['imagePath'] as String?;
 
     try {
+      debugPrint('[SaveScreen] createFolder 호출: name=$name, imagePath=$imagePath');
       // ── 서버 연동 자리: 6-2. createFolder ──────
-      final newFolder = await _api.createFolder(name);
+      final newFolder = await _api.createFolder(name, imagePath: imagePath);
       // ───────────────────────────────────────────
       setState(() => _folders.add(newFolder));
     } catch (e) {

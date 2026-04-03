@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import '../models/community_post.dart';
 import '../services/api_service.dart';
 import 'location_picker_screen.dart';
+import 'sign_in_screen.dart';
 
 // ──────────────────────────────────────────────
 // 글쓰기 화면
@@ -23,7 +24,8 @@ class _WritePostScreenState extends State<WritePostScreen> {
   final FocusNode _bodyFocusNode = FocusNode();
 
   String? _selectedCategory;
-  String _location = '일본 도쿄도 시부야구 도겐자카 2-2-1';
+  String? _selectedCountry;
+  String _location = '위치를 선택해주세요';
   NLatLng? _pickedLatLng;
   bool _isPosting = false;
 
@@ -32,7 +34,17 @@ class _WritePostScreenState extends State<WritePostScreen> {
   File? _selectedVideo;
   final ImagePicker _picker = ImagePicker();
 
-  static const List<String> _categories = ['주의', '문화', '맛집', '카페', '기타'];
+  // 필터 화면과 동일한 카테고리/나라
+  static const Map<String, String> _categoryWithIcon = {
+    '위험/주의': '⚠️',
+    '문화': '🎎',
+    '맛집/물가': '🍽️',
+    '카페': '☕',
+    '꿀팁': '📍',
+    '기타': '☁️',
+  };
+
+  static const List<String> _countries = ['일본', '베트남', '태국', '대만', '한국', '유럽', '미국'];
 
   @override
   void dispose() {
@@ -46,46 +58,95 @@ class _WritePostScreenState extends State<WritePostScreen> {
       _titleController.text.trim().isNotEmpty &&
       _bodyController.text.trim().isNotEmpty &&
       _selectedCategory != null;
+      // 위치/나라는 선택 사항
 
   Future<void> _submit() async {
-    if (!_canPost) return;
+    if (_isPosting) return;
     setState(() => _isPosting = true);
 
-    final now = DateTime.now();
-    final newPost = CommunityPost(
-      id: now.millisecondsSinceEpoch.toString(),
-      username: '나',
-      isVerified: false,
-      title: _titleController.text.trim(),
-      preview: _bodyController.text.trim(),
-      timeAgo: '방금',
-      likes: 0,
-      comments: 0,
-      bookmarks: 0,
-      hasThumbnail: false,
-      category: _selectedCategory!,
-      country: '일본',
-      createdAt: now,
-      latitude: _pickedLatLng?.latitude,
-      longitude: _pickedLatLng?.longitude,
-      address: _location,
-    );
-
-    // 서버 전송 (실패해도 로컬에선 게시글 반환)
     try {
-      await _api.createPost(newPost);
-    } catch (_) {
-      // 서버 오류 시 경고만 표시, 화면은 정상 종료
-      if (mounted) {
+      // 1. 로그인 여부 최종 확인 (최우선)
+      final isLoggedIn = await _api.isLoggedIn();
+      if (!isLoggedIn && mounted) {
+        setState(() => _isPosting = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('서버 저장에 실패했지만 로컬에 반영했습니다.')),
+          const SnackBar(content: Text('로그인이 필요합니다. 로그인 화면으로 이동합니다.')),
+        );
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const SignInScreen()));
+        return;
+      }
+
+      // 2. 입력값 검증
+      if (!_canPost) {
+        setState(() => _isPosting = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('모든 항목(제목, 내용, 카테고리, 나라)을 입력해주세요.')),
+        );
+        return;
+      }
+
+      // 3. 미디어 업로드 (있을 경우)
+      List<String> mediaUrls = [];
+      final List<String> localPaths = _selectedImages.map((f) => f.path).toList();
+      if (_selectedVideo != null) localPaths.add(_selectedVideo!.path);
+
+      if (localPaths.isNotEmpty) {
+        mediaUrls = await _api.uploadMedia(localPaths);
+      }
+
+      // 4. 카테고리 → 서버 Enum 변환
+      String mappedCategory = 'ETC';
+      switch (_selectedCategory) {
+        case '위험/주의': mappedCategory = 'DANGER'; break;
+        case '문화':     mappedCategory = 'CULTURE'; break;
+        case '맛집/물가': mappedCategory = 'PRICE'; break;
+        case '카페':     mappedCategory = 'PRICE'; break;
+        case '꿀팁':     mappedCategory = 'ETC'; break;
+        case '기타':     mappedCategory = 'ETC'; break;
+      }
+
+      // 5. 질문 등록
+      // 위치 미설정 시 null 전달 (기본 텍스트는 서버에 보내지 않음)
+      final String? locationToSend = (_location == '위치를 선택해주세요' || _location.isEmpty)
+          ? null
+          : _location;
+
+      final newId = await _api.createQuestion(
+        title: _titleController.text.trim(),
+        content: _bodyController.text.trim(),
+        category: mappedCategory,
+        locationKeyword: locationToSend,
+        country: _selectedCountry,
+        mediaUrls: mediaUrls,
+      );
+
+      // 위치 정보가 있으면 SharedPreferences에 저장 (서버 목록 API가 반환하지 않으므로)
+      if (newId != null && locationToSend != null && locationToSend.isNotEmpty) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('location_$newId', locationToSend);
+        debugPrint('[WritePost] 위치 로컸 저장: location_$newId = $locationToSend');
+      }
+
+      if (mounted) {
+        setState(() => _isPosting = false);
+        Navigator.pop(context, true);
+      }
+    } catch (e) {
+      debugPrint('[WritePost] 등록 실패 상세: $e');
+      if (mounted) {
+        setState(() => _isPosting = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('등록 실패: $e'),
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: '확인',
+              textColor: Colors.white,
+              onPressed: () {},
+            ),
+          ),
         );
       }
-    }
-
-    if (mounted) {
-      setState(() => _isPosting = false);
-      Navigator.pop(context, newPost); // 항상 반환
     }
   }
 
@@ -113,13 +174,12 @@ class _WritePostScreenState extends State<WritePostScreen> {
       );
       if (picked.isNotEmpty && mounted) {
         setState(() {
-          // 최대 10장
           final remaining = 10 - _selectedImages.length;
           final toAdd = picked.take(remaining).map((x) => File(x.path)).toList();
           _selectedImages.addAll(toAdd);
           if (picked.length > remaining) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('사진은 최대 10장까지 쳊부할 수 있습니다.')),
+              const SnackBar(content: Text('사진은 최대 10장까지 첨부할 수 있습니다.')),
             );
           }
         });
@@ -171,7 +231,6 @@ class _WritePostScreenState extends State<WritePostScreen> {
         actions: [
           TextButton(
             onPressed: () {
-              // TODO: 임시저장 기능
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text('임시저장 되었습니다.')),
               );
@@ -183,18 +242,18 @@ class _WritePostScreenState extends State<WritePostScreen> {
             child: _isPosting
                 ? const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)))
                 : GestureDetector(
-                    onTap: _canPost ? _submit : null,
+                    onTap: _submit,
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 200),
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
                       decoration: BoxDecoration(
-                        color: _canPost ? Colors.black : Colors.grey[300],
+                        color: _canPost ? Colors.black : Colors.grey[400],
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
                         '완료',
                         style: TextStyle(
-                          color: _canPost ? Colors.white : Colors.grey[500],
+                          color: _canPost ? Colors.white : Colors.white.withOpacity(0.8),
                           fontWeight: FontWeight.bold,
                           fontSize: 13,
                         ),
@@ -232,39 +291,90 @@ class _WritePostScreenState extends State<WritePostScreen> {
                     ),
                     const Divider(height: 1, thickness: 1, color: Color(0xFFEEEEEE), indent: 16, endIndent: 16),
 
-                    // ── 카테고리 ───────────────────────────────
+                    // ── 카테고리 ──────────────────────────────
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
                       child: const Text(
                         '카테고리',
-                        style: TextStyle(fontSize: 12, color: Colors.black54, fontWeight: FontWeight.w500),
+                        style: TextStyle(fontSize: 13, color: Colors.black54, fontWeight: FontWeight.w600),
                       ),
                     ),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                       child: Wrap(
                         spacing: 8,
-                        children: _categories.map((cat) {
-                          final isSelected = _selectedCategory == cat;
+                        runSpacing: 8,
+                        children: _categoryWithIcon.entries.map((e) {
+                          final isSelected = _selectedCategory == e.key;
                           return GestureDetector(
-                            onTap: () => setState(() => _selectedCategory = isSelected ? null : cat),
+                            onTap: () => setState(() => _selectedCategory = isSelected ? null : e.key),
                             child: AnimatedContainer(
                               duration: const Duration(milliseconds: 150),
-                              margin: const EdgeInsets.only(bottom: 8),
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                               decoration: BoxDecoration(
-                                color: isSelected ? Colors.black : Colors.white,
-                                borderRadius: BorderRadius.circular(20),
+                                color: isSelected ? const Color(0xFFFFD54F) : Colors.white,
+                                borderRadius: BorderRadius.circular(22),
                                 border: Border.all(
-                                  color: isSelected ? Colors.black : const Color(0xFFDDDDDD),
+                                  color: isSelected ? const Color(0xFFFFD54F) : const Color(0xFFDDDDDD),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(e.value, style: const TextStyle(fontSize: 14)),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    e.key,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                                      color: Colors.black,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+
+                    const SizedBox(height: 8),
+                    const Divider(height: 1, thickness: 1, color: Color(0xFFEEEEEE), indent: 16, endIndent: 16),
+
+                    // ── 나라 (선택) ────────────────────────────
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+                      child: const Text(
+                        '나라 (선택)',
+                        style: TextStyle(fontSize: 13, color: Colors.black54, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _countries.map((country) {
+                          final isSelected = _selectedCountry == country;
+                          return GestureDetector(
+                            onTap: () => setState(() => _selectedCountry = isSelected ? null : country),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: isSelected ? const Color(0xFFFFD54F) : Colors.white,
+                                borderRadius: BorderRadius.circular(22),
+                                border: Border.all(
+                                  color: isSelected ? const Color(0xFFFFD54F) : const Color(0xFFDDDDDD),
                                 ),
                               ),
                               child: Text(
-                                cat,
+                                country,
                                 style: TextStyle(
                                   fontSize: 13,
-                                  fontWeight: FontWeight.w500,
-                                  color: isSelected ? Colors.white : Colors.black,
+                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                                  color: Colors.black,
                                 ),
                               ),
                             ),
@@ -285,7 +395,7 @@ class _WritePostScreenState extends State<WritePostScreen> {
                         onChanged: (_) => setState(() {}),
                         style: const TextStyle(fontSize: 14, color: Colors.black87, height: 1.6),
                         maxLines: null,
-                        minLines: 12,
+                        minLines: 10,
                         decoration: const InputDecoration(
                           hintText: '자유롭게 경험을 공유하거나 궁금한 점을 남겨보세요.',
                           hintStyle: TextStyle(fontSize: 14, color: Color(0xFFBBBBBB), height: 1.6),
@@ -294,8 +404,8 @@ class _WritePostScreenState extends State<WritePostScreen> {
                         ),
                       ),
                     ),
-                    // ── 선택된 사진/동영상 마리보기 ────────────────
-                    if (_selectedImages.isNotEmpty || _selectedVideo != null) ...[  
+                    // ── 선택된 사진/동영상 미리보기 ────────────────
+                    if (_selectedImages.isNotEmpty || _selectedVideo != null) ...[
                       const SizedBox(height: 12),
                       SizedBox(
                         height: 100,
@@ -305,7 +415,6 @@ class _WritePostScreenState extends State<WritePostScreen> {
                           separatorBuilder: (_, __) => const SizedBox(width: 8),
                           itemCount: _selectedImages.length + (_selectedVideo != null ? 1 : 0),
                           itemBuilder: (ctx, i) {
-                            // 동영상 아이템
                             if (_selectedVideo != null && i == _selectedImages.length) {
                               return _mediaPreviewTile(
                                 child: Stack(
@@ -320,7 +429,6 @@ class _WritePostScreenState extends State<WritePostScreen> {
                                 onRemove: () => setState(() => _selectedVideo = null),
                               );
                             }
-                            // 사진 아이템
                             return _mediaPreviewTile(
                               child: Image.file(_selectedImages[i], fit: BoxFit.cover),
                               onRemove: () => setState(() => _selectedImages.removeAt(i)),
@@ -342,29 +450,31 @@ class _WritePostScreenState extends State<WritePostScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             child: Column(
               children: [
-                // 위치 행
-                Row(
-                  children: [
-                    const Icon(Icons.location_on, size: 18, color: Colors.black54),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        _location,
-                        style: const TextStyle(fontSize: 13, color: Colors.black87),
-                        overflow: TextOverflow.ellipsis,
+                GestureDetector(
+                  onTap: _changeLocation,
+                  behavior: HitTestBehavior.opaque,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.location_on, size: 18, color: Color(0xFFFFB74D)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _location == '위치를 선택해주세요' 
+                              ? '위치를 설정해주세요' 
+                              : (_selectedCountry != null ? '$_selectedCountry · $_location' : _location),
+                          style: TextStyle(
+                            fontSize: 13, 
+                            color: _location == '위치를 선택해주세요' ? Colors.grey : Colors.black87,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                    ),
-                    GestureDetector(
-                      onTap: _changeLocation,
-                      child: const Text(
-                        '위치 변경',
-                        style: TextStyle(fontSize: 12, color: Colors.black54, decoration: TextDecoration.underline),
-                      ),
-                    ),
-                  ],
+                      Icon(Icons.chevron_right, size: 18, color: Colors.grey[400]),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 10),
-                // 미디어 버튼 행
                 Row(
                   children: [
                     _mediaButton(Icons.image_outlined, '사진', _pickImages),
@@ -376,7 +486,7 @@ class _WritePostScreenState extends State<WritePostScreen> {
                           ? () => setState(() => _selectedVideo = null)
                           : _pickVideo,
                     ),
-                    if (_selectedVideo != null) ...[  
+                    if (_selectedVideo != null) ...[
                       const SizedBox(width: 6),
                       const Icon(Icons.check_circle, size: 14, color: Colors.green),
                       const SizedBox(width: 2),
@@ -387,14 +497,12 @@ class _WritePostScreenState extends State<WritePostScreen> {
               ],
             ),
           ),
-          // 하단 바 높이 확보 (키보드 올라올 때)
           SizedBox(height: MediaQuery.of(context).viewInsets.bottom > 0 ? 0 : 8),
         ],
       ),
     );
   }
 
-  // ── 미디어 미리보기 타일 ───────────────────────────────
   Widget _mediaPreviewTile({required Widget child, required VoidCallback onRemove}) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(8),
@@ -426,7 +534,6 @@ class _WritePostScreenState extends State<WritePostScreen> {
     );
   }
 
-  // ── 미디어 버튼 (사진/동영상) ────────────────────────────
   Widget _mediaButton(IconData icon, String label, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,

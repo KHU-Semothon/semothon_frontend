@@ -4,25 +4,39 @@ import '../models/save_folder.dart';
 import '../services/api_service.dart';
 import 'sign_in_screen.dart';
 
-// ── 댓글 임시 모델 ─────────────────────────────────────────────
+// ── 댓글 모델 ───────────────────────────────────────────────────
 class _Comment {
-  final String id;
-  final String username;
-  final String userSubtitle;
-  final String text;
-  final String timeAgo;
-  int likes;
-  final int replyCount;
+  final String answerId;
+  final String authorNickname;
+  final String content;
+  final String createdAt;
+  int likeCount;
+  final bool isAccepted;
+  final int? replyCount;
 
   _Comment({
-    required this.id,
-    required this.username,
-    required this.userSubtitle,
-    required this.text,
-    required this.timeAgo,
-    this.likes = 0,
-    this.replyCount = 0,
+    required this.answerId,
+    required this.authorNickname,
+    required this.content,
+    required this.createdAt,
+    this.likeCount = 0,
+    this.isAccepted = false,
+    this.replyCount,
   });
+
+  String get timeAgo => _parseTimeAgo(createdAt);
+
+  static String _parseTimeAgo(String dateStr) {
+    if (dateStr.isEmpty) return '방금 전';
+    try {
+      final dt = DateTime.parse(dateStr);
+      final diff = DateTime.now().difference(dt);
+      if (diff.inMinutes < 1) return '방금 전';
+      if (diff.inMinutes < 60) return '${diff.inMinutes}분 전';
+      if (diff.inHours < 24) return '${diff.inHours}시간 전';
+      return '${diff.inDays}일 전';
+    } catch (_) { return dateStr; }
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -30,7 +44,6 @@ class _Comment {
 // ─────────────────────────────────────────────────────────────
 class PostDetailScreen extends StatefulWidget {
   final CommunityPost post;
-
   const PostDetailScreen({super.key, required this.post});
 
   @override
@@ -46,20 +59,21 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   bool _isLiked = false;
   bool _isBookmarked = false;
   bool _isSubmitting = false;
-  int _likeCount = 0;
   bool _isReported = false;
-  // 작성자 신뢰도 (서버 응답 기본값: 90%)
+  int _likeCount = 0;
+  String? _locationKeyword;   // 상세 API에서 로드
   late double _authorTrustScore;
-
   final List<_Comment> _comments = [];
 
   @override
   void initState() {
     super.initState();
     _likeCount = widget.post.likes;
-    // 서버에서 내려올 때 authorTrustScore 사용, 없으면 기본값 90
+    _isLiked = widget.post.isLiked;
+    _isBookmarked = widget.post.isBookmarked;
     _authorTrustScore = widget.post.authorTrustScore ?? 90.0;
-    _loadComments();
+    _locationKeyword = widget.post.locationKeyword; // 초기값: 목록에서 전달된 값
+    _refreshDetail();
   }
 
   @override
@@ -70,243 +84,141 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     super.dispose();
   }
 
-  // 댓글 불러오기 (서버가 응답 없으면 빈 리스트)
-  Future<void> _loadComments() async {
-    // TODO: 실제 서버 연동 시 api.getComments(widget.post.id) 사용
-    // 현재는 빈 상태로 시작
-    setState(() {});
+  Future<void> _refreshDetail() async {
+    try {
+      final detail = await _api.getQuestionDetail(widget.post.id);
+      debugPrint('[refreshDetail] keys: ${detail.keys.toList()}');
+
+      if (mounted) {
+        setState(() {
+          _isLiked   = detail['isLiked']   as bool? ?? _isLiked;
+          _likeCount = (detail['likeCount'] as num?)?.toInt() ?? _likeCount;
+
+          // 상세 API에서 locationKeyword 추출
+          final detailLocation = detail['locationKeyword'] as String?;
+          if (detailLocation != null && detailLocation.isNotEmpty) {
+            _locationKeyword = detailLocation;
+          }
+
+          // 서버가 다양한 키로 댓글 목록을 반환할 수 있음
+          final answersRaw = detail['answers']
+              ?? detail['comments']
+              ?? detail['answerList']
+              ?? detail['answerResponses']
+              ?? [];
+          debugPrint('[refreshDetail] answersRaw type: ${answersRaw.runtimeType}, count: ${(answersRaw as List?)?.length ?? 0}');
+
+          final answersData = answersRaw is List ? answersRaw : [];
+          _comments.clear();
+          for (var item in answersData) {
+            final json = item as Map<String, dynamic>;
+            _comments.add(_Comment(
+              answerId:       json['answerId']?.toString() ?? json['id']?.toString() ?? '',
+              authorNickname: json['authorNickname'] as String? ?? json['nickname'] as String? ?? '익명',
+              content:        json['content'] as String? ?? '',
+              createdAt:      json['createdAt'] as String? ?? '',
+              likeCount:      (json['likeCount'] as num?)?.toInt() ?? 0,
+              isAccepted:     json['isAccepted'] as bool? ?? false,
+              replyCount:     (json['replyCount'] as num?)?.toInt(),
+            ));
+          }
+          debugPrint('[refreshDetail] 파싱된 댓글 수: ${_comments.length}');
+        });
+      }
+    } catch (e) {
+      debugPrint('[refreshDetail] 오류: $e');
+    }
   }
 
-  // ── 좋아요 ───────────────────────────────────────────────────
-  void _toggleLike() {
+  // ── 좋아요 ────────────────────────────────────────────────────
+  Future<void> _toggleLike() async {
+    final orig = _isLiked;
+    final origCount = _likeCount;
     setState(() {
       _isLiked = !_isLiked;
       _likeCount += _isLiked ? 1 : -1;
     });
+    try {
+      final result = await _api.toggleQuestionLike(widget.post.id);
+      if (mounted) {
+        setState(() {
+          _isLiked   = result['isLiked']   as bool? ?? _isLiked;
+          _likeCount = (result['likeCount'] as num?)?.toInt() ?? _likeCount;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() { _isLiked = orig; _likeCount = origCount; });
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('좋아요 실패: $e')));
+      }
+    }
   }
 
   // ── 신고 ─────────────────────────────────────────────────────
   Future<void> _handleReport() async {
     if (_isReported) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('이미 신고한 게시물입니다.')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('이미 신고한 게시물입니다.')));
       return;
     }
-
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('게시물 신고', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
-        content: const Text('이 게시물을 신고하시겠습니까?\n신고 시 작성자의 신뢰도가 10% 낮아집니다.'),
+        title: const Text('게시물 신고', style: TextStyle(fontWeight: FontWeight.bold)),
+        content: const Text('이 게시물을 신고하시겠습니까?'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('취소', style: TextStyle(color: Colors.grey)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('신고', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소', style: TextStyle(color: Colors.grey))),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('신고', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold))),
         ],
       ),
     );
-
     if (confirmed != true || !mounted) return;
-
-    try {
-      await _api.reportPost(widget.post.id);
-    } catch (_) {
-      // 서버 실패해도 로컬 반영
-    }
+    try { await _api.reportPost(widget.post.id); } catch (_) {}
     if (!mounted) return;
     setState(() {
       _isReported = true;
       _authorTrustScore = (_authorTrustScore - 10).clamp(0, 100);
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('신고가 접수되었습니다.'), behavior: SnackBarBehavior.floating),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('신고가 접수되었습니다.')));
   }
 
-  // ── 작성자 프로필 팝업 ─────────────────────────────────────────
-  void _showAuthorProfile() {
-    final post = widget.post;
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 핸들 바
-              Container(
-                width: 36, height: 4,
-                margin: const EdgeInsets.only(bottom: 20),
-                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
-              ),
-              // 아바타 + 이름
-              const CircleAvatar(
-                radius: 36,
-                backgroundColor: Color(0xFFD0D0D0),
-                child: Icon(Icons.person, size: 38, color: Colors.white),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(post.username,
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  if (post.isVerified) ...[
-                    const SizedBox(width: 6),
-                    const Icon(Icons.verified, size: 16, color: Color(0xFF29B6F6)),
-                  ],
-                ],
-              ),
-              // 거주/방문 정보
-              const SizedBox(height: 4),
-              Text(
-                _buildAuthorSubtitle(post),
-                style: const TextStyle(fontSize: 13, color: Colors.grey),
-              ),
-              const SizedBox(height: 20),
-              // 신뢰도 바
-              Row(
-                children: [
-                  const Text('신뢰도', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                  const SizedBox(width: 8),
-                  Text(
-                    '${_authorTrustScore.toInt()}%',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      color: _authorTrustScore >= 70
-                          ? Colors.green
-                          : _authorTrustScore >= 40 ? Colors.orange : Colors.red,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: _authorTrustScore / 100,
-                  minHeight: 8,
-                  backgroundColor: Colors.grey[200],
-                  valueColor: AlwaysStoppedAnimation<Color>(
-                    _authorTrustScore >= 70
-                        ? Colors.green
-                        : _authorTrustScore >= 40 ? Colors.orange : Colors.red,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // 작성자 부제 텍스트 생성
-  String _buildAuthorSubtitle(CommunityPost post) {
-    final parts = <String>[];
-    if (post.authorLivingYears != null && post.authorLivingYears! > 0) {
-      parts.add('${post.country} 거주 ${post.authorLivingYears}년');
-    }
-    if (post.authorVisitCount != null && post.authorVisitCount! > 0) {
-      parts.add('방문 ${post.authorVisitCount}회');
-    }
-    if (parts.isEmpty && post.country.isNotEmpty) return '${post.country} 방문';
-    return parts.join(' · ');
-  }
-
-  // ── 저장 (폴더 선택) ─────────────────────────────────────────
+  // ── 저장 ─────────────────────────────────────────────────────
   Future<void> _handleSave() async {
     final loggedIn = await _api.isLoggedIn();
     if (!mounted) return;
-
-    if (!loggedIn) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const SignInScreen()),
-      );
-      return;
-    }
-
-    // 폴더 목록 불러오기
+    if (!loggedIn) { Navigator.push(context, MaterialPageRoute(builder: (_) => const SignInScreen())); return; }
     List<SaveFolder> folders = [];
-    try {
-      folders = await _api.getFolders();
-    } catch (_) {}
-
+    try { folders = await _api.getFolders(); } catch (_) {}
     if (!mounted) return;
-
-    // 폴더 선택 바텀시트
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => _FolderPickerSheet(
         folders: folders,
         onFolderSelected: (folder) async {
           Navigator.pop(ctx);
           try {
-            // 실제 서버 연동: POST /api/v1/folders/{folderId}/posts/{postId}
             await _api.addPostToFolder(folder.id, widget.post.id);
             setState(() => _isBookmarked = true);
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('"${folder.name}"에 저장되었습니다.'),
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
-            }
+            if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('"${folder.name}"에 저장되었습니다.')));
           } catch (e) {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('저장 실패: $e')),
-              );
-            }
+            if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('저장 실패: $e')));
           }
         },
         onCreateFolder: () async {
           Navigator.pop(ctx);
-          // 새 폴더 이름 입력 다이얼로그
           final name = await _showCreateFolderDialog();
           if (name != null && name.isNotEmpty && mounted) {
             try {
-              // 1. 새 폴더 생성
               final newFolder = await _api.createFolder(name);
-              // 2. 새 폴더에 게시글 저장: POST /api/v1/folders/{folderId}/posts/{postId}
               await _api.addPostToFolder(newFolder.id, widget.post.id);
               setState(() => _isBookmarked = true);
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('"$name" 폴더에 저장되었습니다.'),
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
-              }
+              if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('"$name" 폴더에 저장되었습니다.')));
             } catch (e) {
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('저장 실패: $e')),
-                );
-              }
+              if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('저장 실패: $e')));
             }
           }
         },
@@ -321,18 +233,14 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
       builder: (ctx) => AlertDialog(
         backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('새 폴더', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+        title: const Text('새 폴더', style: TextStyle(fontWeight: FontWeight.bold)),
         content: TextField(
           controller: ctrl,
           autofocus: true,
           decoration: InputDecoration(
             hintText: '폴더 이름',
-            hintStyle: TextStyle(color: Colors.grey[400]),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: Colors.black),
-            ),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.black)),
           ),
         ),
         actions: [
@@ -343,54 +251,71 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     );
   }
 
-  // ── 댓글 제출 ──────────────────────────────────────────────
+  // ── 댓글 제출 ─────────────────────────────────────────────────
   Future<void> _submitComment() async {
     final text = _commentController.text.trim();
     if (text.isEmpty || _isSubmitting) return;
-
     final loggedIn = await _api.isLoggedIn();
     if (!mounted) return;
-    if (!loggedIn) {
-      Navigator.push(context, MaterialPageRoute(builder: (_) => const SignInScreen()));
-      return;
-    }
-
+    if (!loggedIn) { Navigator.push(context, MaterialPageRoute(builder: (_) => const SignInScreen())); return; }
     setState(() => _isSubmitting = true);
     try {
-      // TODO: 실제 서버 연동 시 api.createComment(postId, text)
-      final newComment = _Comment(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        username: '나',
-        userSubtitle: '',
-        text: text,
-        timeAgo: '방금',
-        likes: 0,
-        replyCount: 0,
-      );
-      setState(() {
-        _comments.add(newComment);
-        _commentController.clear();
-      });
-      _commentFocus.unfocus();
-
-      // 스크롤 하단으로
-      await Future.delayed(const Duration(milliseconds: 100));
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
+      debugPrint('[submitComment] questionId=${widget.post.id}, content=$text');
+      await _api.postAnswer(widget.post.id, text);
+      debugPrint('[submitComment] 등록 성공, 목록 새로고침');
+      await _refreshDetail();
+      if (mounted) { _commentController.clear(); _commentFocus.unfocus(); }
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (mounted && _scrollController.hasClients) {
+        _scrollController.animateTo(_scrollController.position.maxScrollExtent, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
       }
+    } catch (e) {
+      debugPrint('[submitComment] 실패: $e');
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('댓글 작성 실패: $e'),
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(label: '확인', textColor: Colors.white, onPressed: () {}),
+        ),
+      );
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
   }
 
+  // ── 카테고리/나라 한글 변환 ─────────────────────────────────
+  static String _koreanLabel(String raw) {
+    const map = {
+      // 카테고리
+      'DANGER':  '위험/주의',
+      'CULTURE': '문화',
+      'PRICE':   '맛집/물가',
+      'CAFE':    '카페',
+      'TIP':     '꿀팁',
+      'ETC':     '기타',
+      // 나라
+      'JAPAN':   '일본',
+      'VIETNAM': '베트남',
+      'THAILAND':'태국',
+      'TAIWAN':  '대만',
+      'KOREA':   '한국',
+      'EUROPE':  '유럽',
+      'USA':     '미국',
+    };
+    return map[raw.toUpperCase()] ?? raw;
+  }
+
+  String _buildAuthorSubtitle(CommunityPost post) {
+    final parts = <String>[];
+    if (post.authorLivingYears != null && post.authorLivingYears! > 0) parts.add('${post.country} 거주 ${post.authorLivingYears}년');
+    if (post.authorVisitCount != null && post.authorVisitCount! > 0) parts.add('방문 ${post.authorVisitCount}회');
+    if (parts.isEmpty && post.country.isNotEmpty) return '${post.country} 방문';
+    return parts.join(' · ');
+  }
+
   @override
   Widget build(BuildContext context) {
     final post = widget.post;
-
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -398,17 +323,10 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
         elevation: 0,
         leading: const BackButton(color: Colors.black),
         centerTitle: true,
-        title: const Text(
-          '커뮤니티',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.black),
-        ),
+        title: const Text('커뮤니티', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.black)),
         actions: [
           IconButton(
-            icon: Icon(
-              _isReported ? Icons.flag : Icons.flag_outlined,
-              color: _isReported ? Colors.red : Colors.black,
-            ),
-            tooltip: '신고',
+            icon: Icon(_isReported ? Icons.flag : Icons.flag_outlined, color: _isReported ? Colors.red : Colors.black),
             onPressed: _handleReport,
           ),
         ],
@@ -420,97 +338,111 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             child: ListView(
               controller: _scrollController,
               children: [
-                // ── 게시글 본체 ────────────────────────────────
+                // ── 게시글 본체 ──────────────────────────────
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                  padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       // 작성자 정보
                       Row(
                         children: [
-                          GestureDetector(
-                            onTap: _showAuthorProfile,
-                            child: const CircleAvatar(
-                              radius: 20,
-                              backgroundColor: Color(0xFFD0D0D0),
-                              child: Icon(Icons.person, color: Colors.white, size: 22),
-                            ),
+                          const CircleAvatar(
+                            radius: 22,
+                            backgroundColor: Color(0xFFD0D0D0),
+                            child: Icon(Icons.person, color: Colors.white, size: 24),
                           ),
-                          const SizedBox(width: 10),
+                          const SizedBox(width: 12),
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Row(
                                 children: [
-                                  Text(post.username, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                                  Text(post.username, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                                   if (post.isVerified) ...[
                                     const SizedBox(width: 4),
                                     const Icon(Icons.verified, size: 14, color: Color(0xFF29B6F6)),
                                   ],
                                 ],
                               ),
-                              Text(
-                                _buildAuthorSubtitle(post),
-                                style: const TextStyle(fontSize: 12, color: Colors.grey),
-                              ),
+                              Text(_buildAuthorSubtitle(post), style: const TextStyle(fontSize: 12, color: Colors.grey)),
                             ],
                           ),
                         ],
                       ),
                       const SizedBox(height: 14),
 
-                      // 태그 (국가 + 카테고리)
+                      // 태그 (외곽선 pill) - 서버 enum → 한글 변환
                       Wrap(
                         spacing: 6,
+                        runSpacing: 6,
                         children: [
-                          if (post.country.isNotEmpty) _buildTag(post.country),
-                          if (post.category.isNotEmpty) _buildTag(post.category),
+                          if (post.country.isNotEmpty) _buildOutlineTag(_koreanLabel(post.country)),
+                          if (post.category.isNotEmpty) _buildOutlineTag(_koreanLabel(post.category)),
                         ],
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 14),
 
                       // 제목
-                      Text(
-                        post.title,
-                        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.black, height: 1.4),
-                      ),
+                      Text(post.title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.black, height: 1.4)),
                       const SizedBox(height: 10),
 
                       // 본문
-                      Text(
-                        post.preview,
-                        style: const TextStyle(fontSize: 14, color: Colors.black87, height: 1.65),
-                      ),
+                      Text(post.content.isNotEmpty ? post.content : post.preview,
+                          style: const TextStyle(fontSize: 14, color: Colors.black87, height: 1.65)),
                       const SizedBox(height: 14),
+
+                      // 이미지
+                      if (post.mediaUrls.isNotEmpty)
+                        SizedBox(
+                          height: 180,
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: post.mediaUrls.length,
+                            separatorBuilder: (_, __) => const SizedBox(width: 8),
+                            itemBuilder: (_, i) => ClipRRect(
+                              borderRadius: BorderRadius.circular(10),
+                              child: Image.network(post.mediaUrls[i], height: 180, width: 180, fit: BoxFit.cover),
+                            ),
+                          ),
+                        ),
+                      if (post.mediaUrls.isNotEmpty) const SizedBox(height: 14),
 
                       // 시간 + 위치
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(post.timeAgo, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                          if (post.address != null && post.address!.isNotEmpty)
+                          if (_locationKeyword != null && _locationKeyword!.isNotEmpty)
                             Row(
+                              mainAxisSize: MainAxisSize.min,
                               children: [
-                                const Icon(Icons.location_on, size: 13, color: Colors.grey),
-                                const SizedBox(width: 2),
-                                Text(
-                                  post.address!.length > 12 ? '${post.address!.substring(0, 12)}...' : post.address!,
-                                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                                Container(
+                                  padding: const EdgeInsets.all(2),
+                                  decoration: const BoxDecoration(color: Color(0xFFFFD54F), shape: BoxShape.circle),
+                                  child: const Icon(Icons.location_on, size: 10, color: Colors.white),
+                                ),
+                                const SizedBox(width: 4),
+                                ConstrainedBox(
+                                  constraints: const BoxConstraints(maxWidth: 150),
+                                  child: Text(
+                                    _locationKeyword!,
+                                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ),
                               ],
                             ),
                         ],
                       ),
+                      const SizedBox(height: 16),
                     ],
                   ),
                 ),
 
-                const SizedBox(height: 12),
-
-                // ── 좋아요 / 댓글 / 저장 액션 바 ────────────────
+                // ── 액션 바 (좋아요 | 댓글 | 저장) ───────────
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  height: 52,
                   decoration: const BoxDecoration(
                     border: Border.symmetric(
                       horizontal: BorderSide(color: Color(0xFFEEEEEE), width: 1),
@@ -519,79 +451,79 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                   child: Row(
                     children: [
                       // 좋아요
-                      GestureDetector(
-                        onTap: _toggleLike,
-                        child: Row(
-                          children: [
-                            Icon(
-                              _isLiked ? Icons.favorite : Icons.favorite_border,
-                              size: 20,
-                              color: _isLiked ? Colors.red : Colors.black54,
-                            ),
-                            const SizedBox(width: 5),
-                            Text('좋아요 $_likeCount', style: const TextStyle(fontSize: 13, color: Colors.black54)),
-                          ],
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: _toggleLike,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(_isLiked ? Icons.favorite : Icons.favorite_border,
+                                  size: 20, color: _isLiked ? Colors.red : Colors.black54),
+                              const SizedBox(width: 6),
+                              Text('좋아요 $_likeCount', style: const TextStyle(fontSize: 13, color: Colors.black54)),
+                            ],
+                          ),
                         ),
                       ),
-                      const SizedBox(width: 20),
+                      Container(width: 1, height: 24, color: const Color(0xFFEEEEEE)),
                       // 댓글
-                      GestureDetector(
-                        onTap: () => _commentFocus.requestFocus(),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.chat_bubble_outline, size: 20, color: Colors.black54),
-                            const SizedBox(width: 5),
-                            Text('댓글 ${_comments.length}', style: const TextStyle(fontSize: 13, color: Colors.black54)),
-                          ],
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () => _commentFocus.requestFocus(),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.chat_bubble_outline, size: 20, color: Colors.black54),
+                              const SizedBox(width: 6),
+                              Text('댓글 ${_comments.length}', style: const TextStyle(fontSize: 13, color: Colors.black54)),
+                            ],
+                          ),
                         ),
                       ),
-                      const Spacer(),
+                      Container(width: 1, height: 24, color: const Color(0xFFEEEEEE)),
                       // 저장
-                      GestureDetector(
-                        onTap: _handleSave,
-                        child: Row(
-                          children: [
-                            Icon(
-                              _isBookmarked ? Icons.bookmark : Icons.bookmark_border,
-                              size: 20,
-                              color: _isBookmarked ? Colors.black : Colors.black54,
-                            ),
-                            const SizedBox(width: 4),
-                            const Text('저장', style: TextStyle(fontSize: 13, color: Colors.black54)),
-                          ],
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: _handleSave,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(_isBookmarked ? Icons.bookmark : Icons.bookmark_border,
+                                  size: 20, color: _isBookmarked ? Colors.black : Colors.black54),
+                              const SizedBox(width: 6),
+                              const Text('저장', style: TextStyle(fontSize: 13, color: Colors.black54)),
+                            ],
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
 
-                // ── 댓글 목록 ─────────────────────────────────
+                // ── 댓글 목록 ──────────────────────────────────
                 if (_comments.isEmpty)
                   const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 32),
-                    child: Center(
-                      child: Text('첫 댓글을 남겨보세요', style: TextStyle(fontSize: 13, color: Colors.grey)),
-                    ),
+                    padding: EdgeInsets.symmetric(vertical: 40),
+                    child: Center(child: Text('첫 댓글을 남겨보세요', style: TextStyle(fontSize: 13, color: Colors.grey))),
                   )
                 else
                   ..._comments.map((c) => _CommentItem(
                     comment: c,
-                    onLike: () => setState(() => c.likes++),
+                    onLike: () => setState(() => c.likeCount++),
                     onReply: () => _commentFocus.requestFocus(),
                   )),
 
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
               ],
             ),
           ),
 
-          // ── 댓글 입력바 ──────────────────────────────────────
+          // ── 댓글 입력바 ────────────────────────────────────
           const Divider(height: 1, thickness: 1, color: Color(0xFFEEEEEE)),
           Container(
             color: Colors.white,
-            padding: EdgeInsets.fromLTRB(
-              12, 8, 12, MediaQuery.of(context).viewInsets.bottom > 0 ? 8 : 20,
-            ),
+            padding: EdgeInsets.fromLTRB(12, 8, 12,
+                MediaQuery.of(context).viewInsets.bottom > 0 ? 8 : 20),
             child: Row(
               children: [
                 const CircleAvatar(
@@ -625,20 +557,22 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                 ),
                 const SizedBox(width: 8),
                 GestureDetector(
-                  onTap: _commentController.text.trim().isNotEmpty ? _submitComment : null,
+                  onTap: _commentController.text.trim().isNotEmpty && !_isSubmitting ? _submitComment : null,
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 150),
-                    width: 36,
-                    height: 36,
+                    width: 36, height: 36,
                     decoration: BoxDecoration(
-                      color: _commentController.text.trim().isNotEmpty ? Colors.black : Colors.grey[300],
+                      color: _commentController.text.trim().isNotEmpty && !_isSubmitting
+                          ? Colors.black : Colors.grey[300],
                       shape: BoxShape.circle,
                     ),
-                    child: Icon(
-                      Icons.send_rounded,
-                      size: 18,
-                      color: _commentController.text.trim().isNotEmpty ? Colors.white : Colors.grey,
-                    ),
+                    child: _isSubmitting
+                        ? const Padding(
+                            padding: EdgeInsets.all(8),
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          )
+                        : Icon(Icons.send_rounded, size: 18,
+                            color: _commentController.text.trim().isNotEmpty ? Colors.white : Colors.grey),
                   ),
                 ),
               ],
@@ -649,20 +583,21 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     );
   }
 
-  Widget _buildTag(String label) {
+  // 외곽선 태그
+  Widget _buildOutlineTag(String label) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
       decoration: BoxDecoration(
-        color: const Color(0xFFF0F0F0),
-        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFDDDDDD)),
+        borderRadius: BorderRadius.circular(20),
       ),
-      child: Text(label, style: const TextStyle(fontSize: 12, color: Colors.black54, fontWeight: FontWeight.w500)),
+      child: Text(label, style: const TextStyle(fontSize: 12, color: Colors.black87)),
     );
   }
 }
 
 // ─────────────────────────────────────────────────────────────
-// 댓글 아이템 위젯
+// 댓글 아이템
 // ─────────────────────────────────────────────────────────────
 class _CommentItem extends StatelessWidget {
   final _Comment comment;
@@ -673,69 +608,93 @@ class _CommentItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // 아바타
               const CircleAvatar(
-                radius: 16,
+                radius: 18,
                 backgroundColor: Color(0xFFD0D0D0),
-                child: Icon(Icons.person, color: Colors.white, size: 16),
+                child: Icon(Icons.person, color: Colors.white, size: 18),
               ),
               const SizedBox(width: 10),
+              // 본문
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // 이름 + 경험 + 아이콘
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        // 이름 + 부제
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(comment.username, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                            if (comment.userSubtitle.isNotEmpty)
-                              Text(comment.userSubtitle, style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                          ],
-                        ),
-                        // 좋아요
-                        GestureDetector(
-                          onTap: onLike,
+                        Expanded(
                           child: Row(
                             children: [
-                              const Icon(Icons.favorite_border, size: 14, color: Colors.grey),
-                              const SizedBox(width: 3),
-                              Text('${comment.likes}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                              Text(comment.authorNickname,
+                                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                              if (comment.isAccepted) ...[
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(4)),
+                                  child: const Text('채택됨', style: TextStyle(fontSize: 10, color: Colors.green, fontWeight: FontWeight.bold)),
+                                ),
+                              ],
                             ],
                           ),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(comment.text, style: const TextStyle(fontSize: 14, color: Colors.black87, height: 1.5)),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Text(comment.timeAgo, style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                        const SizedBox(width: 12),
-                        GestureDetector(
-                          onTap: onReply,
-                          child: const Text('답글', style: TextStyle(fontSize: 11, color: Colors.grey, fontWeight: FontWeight.w500)),
+                        // ♡ · 💬
+                        Row(
+                          children: [
+                            GestureDetector(
+                              onTap: onLike,
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.favorite_border, size: 15, color: Colors.grey),
+                                  const SizedBox(width: 3),
+                                  Text('${comment.likeCount}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            GestureDetector(
+                              onTap: onReply,
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.chat_bubble_outline, size: 15, color: Colors.grey),
+                                  if (comment.replyCount != null && comment.replyCount! > 0) ...[
+                                    const SizedBox(width: 3),
+                                    Text('${comment.replyCount}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                    if (comment.replyCount > 0) ...[
-                      const SizedBox(height: 6),
+                    const SizedBox(height: 6),
+                    // 본문
+                    Text(comment.content, style: const TextStyle(fontSize: 14, color: Colors.black87, height: 1.5)),
+                    const SizedBox(height: 6),
+                    // 시간
+                    Text(comment.timeAgo, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                    // 답글 표시
+                    if (comment.replyCount != null && comment.replyCount! > 0) ...[
+                      const SizedBox(height: 10),
                       Row(
                         children: [
-                          Container(width: 14, height: 1, color: Colors.grey[400]),
+                          const Text('└', style: TextStyle(fontSize: 13, color: Colors.grey)),
+                          const SizedBox(width: 8),
+                          const CircleAvatar(radius: 8, backgroundColor: Color(0xFFD0D0D0),
+                              child: Icon(Icons.person, size: 8, color: Colors.white)),
                           const SizedBox(width: 6),
-                          Text('· 답글 ${comment.replyCount}개', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                          Text('답글 ${comment.replyCount}개',
+                              style: const TextStyle(fontSize: 12, color: Colors.grey)),
                         ],
                       ),
                     ],
@@ -744,10 +703,12 @@ class _CommentItem extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 10),
-          const Divider(height: 1, color: Color(0xFFF5F5F5)),
-        ],
-      ),
+        ),
+        const Padding(
+          padding: EdgeInsets.only(top: 12),
+          child: Divider(height: 1, color: Color(0xFFF5F5F5)),
+        ),
+      ],
     );
   }
 }
@@ -757,7 +718,7 @@ class _CommentItem extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────
 class _FolderPickerSheet extends StatelessWidget {
   final List<SaveFolder> folders;
-  final void Function(SaveFolder) onFolderSelected;
+  final ValueChanged<SaveFolder> onFolderSelected;
   final VoidCallback onCreateFolder;
 
   const _FolderPickerSheet({
@@ -769,51 +730,34 @@ class _FolderPickerSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(20, 20, 20, 8),
-            child: Text('폴더에 저장', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-          ),
-          const Divider(height: 1),
-
-          // 새 폴더 만들기
-          ListTile(
-            leading: Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: const Color(0xFFF5F5F5),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(Icons.add, color: Colors.black54),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(width: 36, height: 4, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2))),
+            const SizedBox(height: 16),
+            const Text('저장할 폴더 선택', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            if (folders.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Text('저장된 폴더가 없습니다.', style: TextStyle(color: Colors.grey)),
+              )
+            else
+              ...folders.map((f) => ListTile(
+                leading: const Icon(Icons.folder_outlined),
+                title: Text(f.name),
+                onTap: () => onFolderSelected(f),
+              )),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.add, color: Colors.black),
+              title: const Text('새 폴더 만들기', style: TextStyle(fontWeight: FontWeight.w600)),
+              onTap: onCreateFolder,
             ),
-            title: const Text('새 폴더 만들기', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-            onTap: onCreateFolder,
-          ),
-
-          if (folders.isNotEmpty) const Divider(height: 1, indent: 20, endIndent: 20),
-
-          // 기존 폴더 목록
-          ...folders.map((f) => ListTile(
-            leading: Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: const Color(0xFFF0F0F0),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(Icons.folder_outlined, color: Colors.black54),
-            ),
-            title: Text(f.name, style: const TextStyle(fontSize: 14)),
-            subtitle: Text('게시물 ${f.postCount}개', style: const TextStyle(fontSize: 12)),
-            onTap: () => onFolderSelected(f),
-          )),
-
-          const SizedBox(height: 8),
-        ],
+          ],
+        ),
       ),
     );
   }

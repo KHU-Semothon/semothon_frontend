@@ -1,73 +1,103 @@
 /// 커뮤니티 게시글 모델
 /// 서버 연동 시 toJson/fromJson을 그대로 사용하면 됩니다.
 class CommunityPost {
-  final String id;
-  final String username;
+  final String questionId;    // 명세서: questionId
+  final String authorNickname; // 명세서: authorNickname
   final bool isVerified;
   final String title;
-  final String preview;
-  final String timeAgo;
-  final int likes;
-  final int comments;
-  final int bookmarks;
-  final bool hasThumbnail;
+  final String content;      // preview 대신 content 사용 가능
+  final String createdAt;    // 명세서: createdAt (String)
+  final int likeCount;       // 명세서: likeCount
+  final int answerCount;     // 명세서: answerCount
+  final String? thumbnailUrl; // 명세서: thumbnailUrl
+  final List<String> mediaUrls; // 명세서: mediaUrls
   final String category;
-  final String country;
-  final DateTime createdAt;
-  final double? latitude;
-  final double? longitude;
-  final String? address;
-  // 작성자 부가 정보 (서버에서 내려줄 때만 사용)
-  final double? authorTrustScore;   // 0~100
+  final String? locationKeyword;
+  
+  final bool isLiked;
+  final bool isCommented;
+  final bool isBookmarked;
+  final double? authorTrustScore;
   final int?    authorLivingYears;
   final int?    authorVisitCount;
 
+  // 위치 정보 (선택 사항)
+  final double? latitude;
+  final double? longitude;
+  final String? address;
+
   const CommunityPost({
-    required this.id,
-    required this.username,
-    required this.isVerified,
+    required this.questionId,
+    required this.authorNickname,
+    this.isVerified = false,
     required this.title,
-    required this.preview,
-    required this.timeAgo,
-    required this.likes,
-    required this.comments,
-    required this.bookmarks,
-    required this.hasThumbnail,
-    required this.category,
-    required this.country,
+    required this.content,
     required this.createdAt,
-    this.latitude,
-    this.longitude,
-    this.address,
+    this.likeCount = 0,
+    this.answerCount = 0,
+    this.thumbnailUrl,
+    this.mediaUrls = const [],
+    required this.category,
+    this.locationKeyword,
+    this.isLiked = false,
+    this.isCommented = false,
+    this.isBookmarked = false,
     this.authorTrustScore,
     this.authorLivingYears,
     this.authorVisitCount,
+    this.latitude,
+    this.longitude,
+    this.address,
   });
+
+  // 호환성을 위한 게터
+  String get id => questionId;
+  String get username => authorNickname;
+  String get preview => content.length > 100 ? content.substring(0, 100) : content;
+  int get likes => likeCount;
+  int get comments => answerCount;
+  int get bookmarks => 0; // 명세서에 없음
+  bool get hasThumbnail => thumbnailUrl != null && thumbnailUrl!.isNotEmpty;
+  String get timeAgo => _parseTimeAgo(createdAt);
+  String get country => locationKeyword ?? '';
 
   // ── 서버 → 앱 (JSON 역직렬화) ─────────────────────────────────
   factory CommunityPost.fromJson(Map<String, dynamic> json) {
     return CommunityPost(
-      id:           json['id']?.toString() ?? '',
-      username:     json['username'] as String? ?? '',
-      isVerified:   json['isVerified'] as bool? ?? false,
-      title:        json['title'] as String? ?? '',
-      preview:      json['preview'] as String? ?? json['content'] as String? ?? '',
-      timeAgo:      json['timeAgo'] as String? ?? '',
-      likes:        (json['likes'] as num?)?.toInt() ?? 0,
-      comments:     (json['comments'] as num?)?.toInt() ?? 0,
-      bookmarks:    (json['bookmarks'] as num?)?.toInt() ?? 0,
-      hasThumbnail: json['hasThumbnail'] as bool? ?? false,
-      category:     json['category'] as String? ?? '',
-      country:      json['country'] as String? ?? '',
-      createdAt:    DateTime.tryParse(json['createdAt'] as String? ?? '') ?? DateTime.now(),
-      latitude:           (json['latitude']  as num?)?.toDouble(),
-      longitude:          (json['longitude'] as num?)?.toDouble(),
-      address:            json['address']    as String?,
-      // 작성자 부가 정보 (API 명세: authorTrustScore, authorLivingYears, authorVisitCount)
-      authorTrustScore:   (json['authorTrustScore']  as num?)?.toDouble(),
-      authorLivingYears:  (json['authorLivingYears'] as num?)?.toInt(),
-      authorVisitCount:   (json['authorVisitCount']  as num?)?.toInt(),
+      questionId:      json['questionId']?.toString() ?? json['id']?.toString() ?? '',
+      authorNickname:  json['authorNickname'] as String? ?? json['username'] as String? ?? '',
+      isVerified:      json['isVerified'] as bool? ?? false,
+      title:           json['title'] as String? ?? '',
+      content:         json['content'] as String? ?? json['preview'] as String? ?? '',
+      createdAt:       json['createdAt'] as String? ?? '',
+      likeCount:       (json['likeCount'] as num?)?.toInt() ?? (json['likes'] as num?)?.toInt() ?? 0,
+      answerCount:     (json['answerCount'] as num?)?.toInt() ?? (json['comments'] as num?)?.toInt() ?? 0,
+      thumbnailUrl:    json['thumbnailUrl'] as String?,
+      mediaUrls:       (json['mediaUrls'] as List?)?.map((e) => e.toString()).toList() ?? [],
+      category:        json['category'] as String? ?? '',
+      locationKeyword: json['locationKeyword'] as String? ?? json['country'] as String?,
+      isLiked:         json['isLiked'] as bool? ?? false,
+      isCommented:     json['isCommented'] as bool? ?? false,
+      isBookmarked:    json['isBookmarked'] as bool? ?? false,
+      authorTrustScore: (json['authorTrustScore'] as num?)?.toDouble(),
+      latitude:        (json['latitude']  as num?)?.toDouble(),
+      longitude:       (json['longitude'] as num?)?.toDouble(),
+      address:         json['address']    as String?,
     );
+  }
+
+  static String _parseTimeAgo(String dateStr) {
+    if (dateStr.isEmpty) return '';
+    try {
+      final dt = DateTime.parse(dateStr);
+      final diff = DateTime.now().difference(dt);
+      if (diff.inMinutes < 1) return '방금 전';
+      if (diff.inMinutes < 60) return '${diff.inMinutes}분 전';
+      if (diff.inHours < 24) return '${diff.inHours}시간 전';
+      return '${diff.inDays}일 전';
+    } catch (_) {
+      return dateStr;
+    }
   }
 
   // ── 앱 → 서버 (JSON 직렬화) ───────────────────────────────────
@@ -75,17 +105,55 @@ class CommunityPost {
     'id':           id,
     'username':     username,
     'isVerified':   isVerified,
+    'isLiked':      isLiked,
+    'isCommented':  isCommented,
+    'isBookmarked': isBookmarked,
     'title':        title,
     'preview':      preview,
     'likes':        likes,
     'comments':     comments,
     'bookmarks':    bookmarks,
     'hasThumbnail': hasThumbnail,
+    'createdAt':    createdAt,
     'category':     category,
     'country':      country,
-    'createdAt':    createdAt.toIso8601String(),
-    if (latitude  != null) 'latitude':  latitude,
+    if (latitude != null)  'latitude': latitude,
     if (longitude != null) 'longitude': longitude,
-    if (address   != null) 'address':   address,
+    if (address != null)   'address': address,
   };
+
+  /// locationKeyword 등 특정 필드만 교체한 복사본 반환
+  CommunityPost copyWith({
+    String? locationKeyword,
+    String? address,
+    double? latitude,
+    double? longitude,
+    bool? isLiked,
+    bool? isBookmarked,
+    int? likeCount,
+  }) {
+    return CommunityPost(
+      questionId:       questionId,
+      authorNickname:   authorNickname,
+      isVerified:       isVerified,
+      title:            title,
+      content:          content,
+      createdAt:        createdAt,
+      likeCount:        likeCount ?? this.likeCount,
+      answerCount:      answerCount,
+      thumbnailUrl:     thumbnailUrl,
+      mediaUrls:        mediaUrls,
+      category:         category,
+      locationKeyword:  locationKeyword ?? this.locationKeyword,
+      isLiked:          isLiked ?? this.isLiked,
+      isCommented:      isCommented,
+      isBookmarked:     isBookmarked ?? this.isBookmarked,
+      authorTrustScore: authorTrustScore,
+      authorLivingYears:authorLivingYears,
+      authorVisitCount: authorVisitCount,
+      latitude:         latitude ?? this.latitude,
+      longitude:        longitude ?? this.longitude,
+      address:          address ?? this.address,
+    );
+  }
 }

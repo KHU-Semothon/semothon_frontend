@@ -1,21 +1,30 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class CommunityFilterResult {
+  final String keyword;
+  final bool onlyVerified;
   final Set<String> selectedCategories;
   final Set<String> selectedCountries;
 
   const CommunityFilterResult({
+    required this.keyword,
+    required this.onlyVerified,
     required this.selectedCategories,
     required this.selectedCountries,
   });
 }
 
 class CommunityFilterScreen extends StatefulWidget {
+  final String initialKeyword;
+  final bool initialOnlyVerified;
   final Set<String> initialCategories;
   final Set<String> initialCountries;
 
   const CommunityFilterScreen({
     super.key,
+    required this.initialKeyword,
+    required this.initialOnlyVerified,
     required this.initialCategories,
     required this.initialCountries,
   });
@@ -25,207 +34,399 @@ class CommunityFilterScreen extends StatefulWidget {
 }
 
 class _CommunityFilterScreenState extends State<CommunityFilterScreen> {
-  static const List<String> _categories = ['식당', '화장실', '쇼핑', '유적'];
-  static const List<String> _countries  = ['일본', '중국', '미국', '영국'];
+  static const String _prefsKey = 'community_recent_keywords';
+  static const int _maxRecent = 3;
 
+  final TextEditingController _searchController = TextEditingController();
+  bool _onlyVerified = false;
   late Set<String> _selectedCategories;
   late Set<String> _selectedCountries;
+
+  List<String> _recentKeywords = [];
+
+  final Map<String, String> _categoryWithIcon = {
+    '위험/주의': '⚠️',
+    '문화': '🎎',
+    '맛집/물가': '🍽️',
+    '카페': '☕',
+    '꿀팁': '📍',
+    '기타': '☁️',
+  };
+
+  final List<String> _countries = ['일본', '베트남', '태국', '대만', '한국', '유럽', '미국'];
 
   @override
   void initState() {
     super.initState();
+    _searchController.text = widget.initialKeyword;
+    _onlyVerified = widget.initialOnlyVerified;
     _selectedCategories = Set.from(widget.initialCategories);
-    _selectedCountries  = Set.from(widget.initialCountries);
+    _selectedCountries = Set.from(widget.initialCountries);
+    _loadRecentKeywords();
   }
 
-  void _toggleCategory(String value) {
-    setState(() {
-      if (_selectedCategories.contains(value)) {
-        _selectedCategories.remove(value);
-      } else {
-        _selectedCategories.add(value);
-      }
-    });
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
-  void _toggleCountry(String value) {
-    setState(() {
-      if (_selectedCountries.contains(value)) {
-        _selectedCountries.remove(value);
-      } else {
-        _selectedCountries.add(value);
-      }
-    });
+  // ── SharedPreferences로 최근 검색어 불러오기 ─────────────
+  Future<void> _loadRecentKeywords() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getStringList(_prefsKey) ?? [];
+    if (mounted) {
+      setState(() {
+        _recentKeywords = saved;
+      });
+    }
   }
 
-  void _reset() {
-    setState(() {
-      _selectedCategories.clear();
-      _selectedCountries.clear();
-    });
+  // ── 검색어 저장 (최대 3개, 중복 제거, 최신이 앞으로) ──────
+  Future<void> _saveKeyword(String keyword) async {
+    if (keyword.trim().isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    List<String> saved = prefs.getStringList(_prefsKey) ?? [];
+    saved.remove(keyword); // 중복 제거
+    saved.insert(0, keyword); // 맨 앞에 추가
+    if (saved.length > _maxRecent) saved = saved.sublist(0, _maxRecent);
+    await prefs.setStringList(_prefsKey, saved);
+    if (mounted) setState(() => _recentKeywords = saved);
   }
 
-  void _apply() {
-    Navigator.pop(
-      context,
-      CommunityFilterResult(
-        selectedCategories: Set.from(_selectedCategories),
-        selectedCountries:  Set.from(_selectedCountries),
-      ),
+  // ── 특정 검색어 삭제 ────────────────────────────────────
+  Future<void> _removeKeyword(String keyword) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> saved = prefs.getStringList(_prefsKey) ?? [];
+    saved.remove(keyword);
+    await prefs.setStringList(_prefsKey, saved);
+    if (mounted) setState(() => _recentKeywords = saved);
+  }
+
+  // ── 전체 검색어 삭제 ────────────────────────────────────
+  Future<void> _clearAllKeywords() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_prefsKey);
+    if (mounted) setState(() => _recentKeywords = []);
+  }
+
+  // ── 검색어 칩 클릭 시 텍스트 필드에 자동 입력 ─────────────
+  void _onRecentKeywordTap(String keyword) {
+    setState(() => _searchController.text = keyword);
+    _searchController.selection = TextSelection.fromPosition(
+      TextPosition(offset: keyword.length),
     );
+  }
+
+  void _apply() async {
+    final keyword = _searchController.text.trim();
+    if (keyword.isNotEmpty) {
+      await _saveKeyword(keyword);
+    }
+    if (mounted) {
+      Navigator.pop(
+        context,
+        CommunityFilterResult(
+          keyword: keyword,
+          onlyVerified: _onlyVerified,
+          selectedCategories: _selectedCategories,
+          selectedCountries: _selectedCountries,
+        ),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text(
-          '검색 필터',
-          style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 17),
-        ),
-      ),
-      body: Column(
-        children: [
-          const Divider(height: 1, thickness: 1, color: Color(0xFFEEEEEE)),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // ── 상단 검색바 ──────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Row(
                 children: [
-                  // ── 카테고리 섹션 ─────────────────────────────
-                  const Text(
-                    '카테고리',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back_ios, size: 20),
+                    onPressed: () => Navigator.pop(context),
                   ),
-                  const SizedBox(height: 16),
-                  _buildGrid(_categories, _selectedCategories, _toggleCategory),
-
-                  const SizedBox(height: 32),
-
-                  // ── 나라 선택 섹션 ────────────────────────────
-                  const Text(
-                    '나라 선택',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                  Expanded(
+                    child: Container(
+                      height: 48,
+                      decoration: const BoxDecoration(
+                        border: Border(bottom: BorderSide(color: Colors.black12)),
+                      ),
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: const InputDecoration(
+                          hintText: '궁금한 장소나 정보를 찾아보세요.',
+                          hintStyle: TextStyle(color: Colors.grey, fontSize: 16),
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        onSubmitted: (_) => _apply(),
+                      ),
+                    ),
                   ),
-                  const SizedBox(height: 16),
-                  _buildGrid(_countries, _selectedCountries, _toggleCountry),
+                  GestureDetector(
+                    onTap: _apply,
+                    child: const Icon(Icons.search, size: 28),
+                  ),
                 ],
               ),
             ),
-          ),
 
-          // ── 하단 버튼 ─────────────────────────────────────────
-          const Divider(height: 1, thickness: 1, color: Color(0xFFEEEEEE)),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-            child: Row(
-              children: [
-                // 초기화
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: _reset,
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Color(0xFFDDDDDD)),
-                      padding: const EdgeInsets.symmetric(vertical: 15),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      backgroundColor: const Color(0xFFF5F5F5),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // ── 최근 검색어 ───────────────────────────────────
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          '최근 검색어',
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                        ),
+                        if (_recentKeywords.isNotEmpty)
+                          GestureDetector(
+                            onTap: () {
+                              showDialog(
+                                context: context,
+                                builder: (_) => AlertDialog(
+                                  title: const Text('최근 검색어 삭제'),
+                                  content: const Text('모든 최근 검색어를 삭제하시겠습니까?'),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context),
+                                      child: const Text('취소'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () {
+                                        Navigator.pop(context);
+                                        _clearAllKeywords();
+                                      },
+                                      child: const Text('삭제', style: TextStyle(color: Colors.red)),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                            child: Row(
+                              children: [
+                                const Icon(Icons.delete_outline, size: 20, color: Colors.black54),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '전체 삭제',
+                                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
                     ),
-                    child: const Text(
-                      '초기화',
-                      style: TextStyle(color: Colors.black, fontWeight: FontWeight.w600, fontSize: 15),
+                    const SizedBox(height: 12),
+
+                    // 최근 검색어 목록
+                    if (_recentKeywords.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Text(
+                          '최근 검색어가 없습니다.',
+                          style: TextStyle(color: Colors.grey[400], fontSize: 13),
+                        ),
+                      )
+                    else
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _recentKeywords
+                            .map((kw) => _recentKeywordChip(kw))
+                            .toList(),
+                      ),
+
+                    const SizedBox(height: 32),
+                    const Text('필터', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+
+                    const SizedBox(height: 16),
+                    const Text('사용자', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(child: _userFilterButton('전체 사용자', !_onlyVerified, () => setState(() => _onlyVerified = false))),
+                        const SizedBox(width: 12),
+                        Expanded(child: _userFilterButton('인증된 사용자', _onlyVerified, () => setState(() => _onlyVerified = true))),
+                      ],
                     ),
-                  ),
+
+                    const SizedBox(height: 32),
+                    const Text('카테고리', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 10,
+                      children: _categoryWithIcon.entries.map((e) {
+                        final isSelected = _selectedCategories.contains(e.key);
+                        return _filterChip(
+                          label: e.key,
+                          iconText: e.value,
+                          isSelected: isSelected,
+                          onTap: () {
+                            setState(() {
+                              if (isSelected) _selectedCategories.remove(e.key);
+                              else _selectedCategories.add(e.key);
+                            });
+                          },
+                        );
+                      }).toList(),
+                    ),
+
+                    const SizedBox(height: 32),
+                    const Text('나라 (선택)', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 10,
+                      children: _countries.map((c) {
+                        final isSelected = _selectedCountries.contains(c);
+                        return _filterChip(
+                          label: c,
+                          isSelected: isSelected,
+                          onTap: () {
+                            setState(() {
+                              if (isSelected) _selectedCountries.remove(c);
+                              else _selectedCountries.add(c);
+                            });
+                          },
+                        );
+                      }).toList(),
+                    ),
+
+                    const SizedBox(height: 48),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _apply,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFFFD54F),
+                          foregroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          elevation: 0,
+                        ),
+                        child: const Text('적용하기', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      ),
+                    ),
+                    const SizedBox(height: 40),
+                  ],
                 ),
-                const SizedBox(width: 12),
-                // 적용
-                Expanded(
-                  flex: 2,
-                  child: ElevatedButton(
-                    onPressed: _apply,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.black,
-                      padding: const EdgeInsets.symmetric(vertical: 15),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      elevation: 0,
-                    ),
-                    child: const Text(
-                      '적용',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  /// items를 2열 그리드로 체크박스와 함께 렌더링합니다.
-  Widget _buildGrid(
-    List<String> items,
-    Set<String> selected,
-    void Function(String) onToggle,
-  ) {
-    // items를 2열로 배치
-    final rows = <Widget>[];
-    for (int i = 0; i < items.length; i += 2) {
-      rows.add(
-        Row(
+  // ── 최근 검색어 칩 (탭: 자동 입력, X 버튼: 개별 삭제) ─────
+  Widget _recentKeywordChip(String text) {
+    return GestureDetector(
+      onTap: () => _onRecentKeywordTap(text),
+      child: Container(
+        padding: const EdgeInsets.only(left: 14, right: 6, top: 8, bottom: 8),
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.grey[300]!),
+          borderRadius: BorderRadius.circular(22),
+          color: Colors.white,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Expanded(child: _checkItem(items[i], selected.contains(items[i]), onToggle)),
-            if (i + 1 < items.length)
-              Expanded(child: _checkItem(items[i + 1], selected.contains(items[i + 1]), onToggle))
-            else
-              const Expanded(child: SizedBox()),
+            Text(text, style: TextStyle(color: Colors.grey[800], fontSize: 13)),
+            const SizedBox(width: 4),
+            GestureDetector(
+              onTap: () => _removeKeyword(text),
+              child: Icon(Icons.close, size: 15, color: Colors.grey[500]),
+            ),
           ],
         ),
-      );
-      rows.add(const SizedBox(height: 14));
-    }
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: rows);
+      ),
+    );
   }
 
-  Widget _checkItem(String label, bool isSelected, void Function(String) onToggle) {
+  Widget _userFilterButton(String label, bool isSelected, VoidCallback onTap) {
     return GestureDetector(
-      onTap: () => onToggle(label),
-      behavior: HitTestBehavior.opaque,
-      child: Row(
-        children: [
-          Container(
-            width: 22,
-            height: 22,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: isSelected ? Colors.black : const Color(0xFFCCCCCC),
-                width: 1.5,
+      onTap: onTap,
+      child: Container(
+        height: 46,
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.black : Colors.white,
+          border: Border.all(color: isSelected ? Colors.black : Colors.grey[300]!),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              label.contains('인증') ? Icons.check_circle : Icons.person_outline,
+              size: 20,
+              color: isSelected ? Colors.white : Colors.black45,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? Colors.white : Colors.black,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                fontSize: 14,
               ),
-              color: isSelected ? Colors.black : Colors.white,
             ),
-            child: isSelected
-                ? const Icon(Icons.check, size: 13, color: Colors.white)
-                : null,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 14,
-              color: isSelected ? Colors.black : const Color(0xFF555555),
-              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _filterChip({
+    required String label,
+    String? iconText,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFFFFD54F) : Colors.white,
+          border: Border.all(color: isSelected ? const Color(0xFFFFD54F) : Colors.grey[300]!),
+          borderRadius: BorderRadius.circular(22),
+          boxShadow: isSelected
+              ? [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2))]
+              : null,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (iconText != null) ...[
+              Text(iconText, style: const TextStyle(fontSize: 14)),
+              const SizedBox(width: 6),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                color: Colors.black,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                fontSize: 13,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
