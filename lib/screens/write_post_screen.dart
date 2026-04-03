@@ -121,6 +121,18 @@ class _WritePostScreenState extends State<WritePostScreen> {
         mediaUrls: mediaUrls,
       );
 
+      // 명세서 4-2: POST /api/v1/posts 에도 동시 등록 (별도 오류는 무시)
+      try {
+        await _api.createPost(
+          title:    _titleController.text.trim(),
+          preview:  _bodyController.text.trim(),
+          category: _selectedCategory ?? '기타',
+          country:  _selectedCountry,
+        );
+      } catch (e) {
+        debugPrint('[WritePost] /api/v1/posts 등록 실패 (무시됨): $e');
+      }
+
       // 위치 정보가 있으면 SharedPreferences에 저장 (서버 목록 API가 반환하지 않으므로)
       if (locationToSend != null && locationToSend.isNotEmpty) {
         final prefs = await SharedPreferences.getInstance();

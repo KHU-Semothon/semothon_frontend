@@ -26,6 +26,9 @@ class CommunityPost {
   final double? longitude;
   final String? address;
 
+  // 명세서 4-1: /api/v1/posts 응답에 포함된 서버 측 timeAgo 문자열 (선택)
+  final String? _rawTimeAgo;
+
   const CommunityPost({
     required this.questionId,
     required this.authorNickname,
@@ -48,7 +51,8 @@ class CommunityPost {
     this.latitude,
     this.longitude,
     this.address,
-  });
+    String? rawTimeAgo,
+  }) : _rawTimeAgo = rawTimeAgo;
 
   // 호환성을 위한 게터
   String get id => questionId;
@@ -58,7 +62,11 @@ class CommunityPost {
   int get comments => answerCount;
   int get bookmarks => 0; // 명세서에 없음
   bool get hasThumbnail => thumbnailUrl != null && thumbnailUrl!.isNotEmpty;
-  String get timeAgo => _parseTimeAgo(createdAt);
+  /// 서버에서 timeAgo 를 직접 받은 경우 그 값을 우선 사용하고, 없으면 createdAt 으로 계산
+  String get timeAgo {
+    final raw = _rawTimeAgo;
+    return (raw != null && raw.isNotEmpty) ? raw : _parseTimeAgo(createdAt);
+  }
   String get country => locationKeyword ?? '';
 
   // ── 서버 → 앱 (JSON 역직렬화) ─────────────────────────────────
@@ -83,6 +91,8 @@ class CommunityPost {
       latitude:        (json['latitude']  as num?)?.toDouble(),
       longitude:       (json['longitude'] as num?)?.toDouble(),
       address:         json['address']    as String?,
+      // 명세서 4-1: /api/v1/posts 응답의 timeAgo 필드 지원
+      rawTimeAgo:      json['timeAgo'] as String?,
     );
   }
 
@@ -154,6 +164,7 @@ class CommunityPost {
       latitude:         latitude ?? this.latitude,
       longitude:        longitude ?? this.longitude,
       address:          address ?? this.address,
+      rawTimeAgo:       _rawTimeAgo,
     );
   }
 }

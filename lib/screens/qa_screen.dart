@@ -41,17 +41,50 @@ class _QaScreenState extends State<QaScreen> {
     if (!isSilent) setState(() => _isLoading = true);
 
     try {
+      // ── /api/v1/posts (명세서 4-1) 와 /api/v1/questions 를 모두 호출하여 병합 ──
       String? mappedCategory;
+      String? postsCategories;
+      String? postsCountries;
+
       if (_filterCategories.isNotEmpty) {
         final cat = _filterCategories.first;
         if (cat == '위험/주의') mappedCategory = 'DANGER';
         else if (cat == '문화') mappedCategory = 'CULTURE';
         else if (cat == '맛집/물가' || cat == '카페') mappedCategory = 'PRICE';
         else if (cat == '기타' || cat == '꿀팁') mappedCategory = 'ETC';
+        postsCategories = _filterCategories.join(',');
       }
 
-      final fetched = await _api.getQuestions(category: mappedCategory, size: 20);
-      debugPrint('[QaScreen] 불러온 게시글 수: ${fetched.length}');
+      if (_filterCountries.isNotEmpty) {
+        postsCountries = _filterCountries.join(',');
+      }
+
+      // 정렬 기준 변환 (명세서: latest | popular | comments)
+      final sortParam = _sortOrder == '인기순' ? 'popular' : 'latest';
+
+      // 두 엔드포인트를 병렬 호출
+      final results = await Future.wait([
+        _api.getPosts(
+          categories: postsCategories,
+          countries: postsCountries,
+          sort: sortParam,
+          size: 20,
+        ).catchError((_) => <CommunityPost>[]),
+        _api.getQuestions(category: mappedCategory, size: 20)
+            .catchError((_) => <CommunityPost>[]),
+      ]);
+
+      // 중복 제거(questionId 기준)하여 병합 (/api/v1/posts 우선)
+      final postsList      = results[0];
+      final questionsList  = results[1];
+      final seenIds        = <String>{};
+      final fetched        = <CommunityPost>[];
+      for (final p in [...postsList, ...questionsList]) {
+        if (seenIds.add(p.questionId)) fetched.add(p);
+      }
+
+      debugPrint('[QaScreen] 불러온 게시글 수: ${fetched.length} '
+          '(posts: ${postsList.length}, questions: ${questionsList.length})');
 
       // SharedPreferences에 캐시된 위치 정보 주입
       final prefs = await SharedPreferences.getInstance();

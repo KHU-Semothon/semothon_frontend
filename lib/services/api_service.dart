@@ -603,7 +603,54 @@ class ApiService {
     }
   }
 
-  /// 지도 구역 등록 (명세서 3-1: POST /api/v1/blocks, 구역 설정 시 호출)
+  // ─────────────────────────────────────────────────────────────
+  // 커뮤니티 게시글 (API 명세서 4절: /api/v1/posts)
+  // ─────────────────────────────────────────────────────────────
+
+  /// 게시글 목록 조회 (필터 + 정렬) — 명세서 4-1: GET /api/v1/posts
+  /// [categories]: 쉼표 구분 카테고리 (예: "식당,쇼핑")
+  /// [countries]:  쉼표 구분 나라   (예: "일본,중국")
+  /// [sort]:       latest | popular | comments
+  Future<List<CommunityPost>> getPosts({
+    String? categories,
+    String? countries,
+    String sort = 'latest',
+    int page = 0,
+    int size = 20,
+  }) async {
+    final params = StringBuffer('/api/v1/posts?sort=$sort&page=$page&size=$size');
+    if (categories != null && categories.isNotEmpty) params.write('&categories=$categories');
+    if (countries  != null && countries.isNotEmpty)  params.write('&countries=$countries');
+    final res = await _get(params.toString(), auth: false);
+    return _extractList(res['data'])
+        .map<CommunityPost>((e) => CommunityPost.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// 게시글 등록 — 명세서 4-2: POST /api/v1/posts
+  /// [category]: 식당 · 화장실 · 쇼핑 · 유적
+  /// [country]:  일본 · 중국 · 미국 · 영국
+  Future<void> createPost({
+    required String title,
+    required String preview,
+    required String category,
+    String? country,
+  }) async {
+    final body = <String, dynamic>{
+      'title':    title,
+      'preview':  preview,
+      'category': category,
+      if (country != null && country.isNotEmpty) 'country': country,
+    };
+    await _post('/api/v1/posts', body: body);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // 지도 구역 등록/삭제/투표 (API 명세서 3절 blocks)
+  // ─────────────────────────────────────────────────────────────
+
+  /// 지도 구역 등록 (명세서 3-2: POST /api/v1/blocks)
+  /// type 값: "hazard" (위험) 또는 "cultural" (문화) — 명세서 기준 소문자
   Future<void> postBlock(MapBlock block) async {
     final body = <String, dynamic>{
       'id':        block.id,
